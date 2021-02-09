@@ -8,3 +8,4 @@ __pycache__
 img
 builtins.pyi
 out
+.mypy_cache

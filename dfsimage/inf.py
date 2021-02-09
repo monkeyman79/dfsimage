@@ -1,6 +1,6 @@
 """Classes for .inf files"""
 
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple, List
 from typing import cast
 import os
 
@@ -29,35 +29,32 @@ def foldcase(path: str) -> str:
     """Normalize the absolute path letter case the hard way for WSL."""
     if path.lower() == path:
         return path
+
     head, tail = os.path.split(path)
+
     if tail != '':
         # Try converting tail to lowercase and see if it
         # refers to the same file
         tail = tail.lower()
         test_path = os.path.join(head, tail)
-        if test_path != path:
-            try:
-                if not os.path.samefile(path, test_path):
-                    # Case sensitive - cannot fold
-                    return path
-            except OSError:
+    else:
+        head = head.lower()
+        test_path = head
+
+    if test_path != path:
+        try:
+            if not os.path.samefile(path, test_path):
                 # Case sensitive - cannot fold
                 return path
-        # Try folding preceding part
-        return os.path.join(foldcase(head), tail)
-
-    # Root element, can we fold that too?
-    head = head.lower()
-    if head == path:
-        return head
-    try:
-        if not os.path.samefile(path, test_path):
+        except OSError:
             # Case sensitive - cannot fold
             return path
-    except OSError:
-        # Case sensitive - cannot fold
-        return path
-    return head
+
+    if tail == '':
+        return head
+
+    # Try folding preceding part
+    return os.path.join(foldcase(head), tail)
 
 
 def canonpath(path: str) -> str:
@@ -101,6 +98,75 @@ class Inf:
         return self.to_string()
 
     @classmethod
+    def _partition(cls, value: str, allow_spaces: bool) -> Tuple[str, List[str]]:
+        """Partition inf line to filename and tail."""
+
+        drive = ''
+
+        if allow_spaces:
+            # expect to find end of file name at position 11
+            # if landed within load address, scan back for space
+            name_end = value.rfind(' ', 0, 13)
+            if name_end == -1:
+                name_end = value.find(' ')
+        else:
+            name_end = value.find(' ')
+
+        # No space in inf file
+        if name_end == -1:
+            raise ValueError("invalid inf file")
+
+        name = value[:name_end].rstrip()
+
+        # Empty name - i.e. inf line starts with space
+        if len(name) == 0:
+            raise ValueError("invalid empty name")
+
+        # If name starts with drive, strip it temporarily to check
+        # for directory name
+        if name[0] == ':':
+            if len(name) < 3 or name[1] < '0' and name[1] > '3' or name[2] != '.':
+                raise ValueError("invalid drive name: '%s'" % name[:3])
+            drive = name[:3]
+            name = name[3:]
+
+        # If name doesn't start with directory name, insert '$.'
+        if name[0] != '.' and (len(name) < 2 or name[1] != '.'):
+            name = '$.%s' % name
+
+        # Name without drive should be at most 9 characters
+        if len(name) > 9:
+            raise ValueError("name too long: '%s'" % name)
+        name = drive + name
+
+        # Split line after filename
+        tail = value[name_end:].split()
+
+        return name, tail
+
+    @classmethod
+    def _assign_field(cls, items, order, field, field_str, index):
+        # Hex field following special keyword is invalid
+        if field == -1:
+            raise ValueError("unexpected inf field at #%d: '%s'" % (index, field_str))
+
+        # More hex fields than expected
+        if field >= len(order):
+            raise ValueError("too many inf fields at #%d: '%s'" % (index, field_str))
+
+        # Assign consecutive hex fields
+        field_name = order[field]
+        try:
+            field_value = int(field_str, 16)
+        except ValueError as err:
+            if len(err.args) > 0:
+                err.args = ("%s in inf field #%d (%s): '%s'" %
+                            (err.args[0], index, field_name, field_str), )
+            raise
+
+        items[field_name] = field_value
+
+    @classmethod
     def from_string(cls, value: str, allow_spaces=True, no_throw=False) -> 'Inf':
         """Read inf data from string.
 
@@ -124,44 +190,7 @@ class Inf:
         items: Dict[str, int] = {}
 
         try:
-            if allow_spaces:
-                # expect to find end of file name at position 11
-                # if landed within load address, scan back for space
-                name_end = value.rfind(' ', 0, 13)
-                if name_end == -1:
-                    name_end = value.find(' ')
-            else:
-                name_end = value.find(' ')
-
-            # No space in inf file
-            if name_end == -1:
-                raise ValueError("invalid inf file")
-            name = value[:name_end].rstrip()
-
-            # Empty name - i.e. inf line starts with space
-            if len(name) == 0:
-                raise ValueError("invalid empty name")
-
-            # If name starts with drive, strip it temporarily to check
-            # for directory name
-            drive = ''
-            if name[0] == ':':
-                if len(name) < 3 or name[1] < '0' and name[1] > '3' or name[2] != '.':
-                    raise ValueError("invalid drive name: '%s'" % name[:3])
-                drive = name[:3]
-                name = name[3:]
-
-            # If name doesn't start with directory name, insert '$.'
-            if name[0] != '.' and (len(name) < 2 or name[1] != '.'):
-                name = '$.%s' % name
-
-            # Name without drive should be at most 9 characters
-            if len(name) > 9:
-                raise ValueError("name too long: '%s'" % name)
-            name = drive + name
-
-            # Split line after filename
-            tail = value[name_end:].split()
+            name, tail = cls._partition(value, allow_spaces)
             index = 0
             field = 0
 
@@ -170,13 +199,7 @@ class Inf:
                 field_str = tail[index]
 
                 # Ignore CRC=xxx
-                if field_str.lower().startswith('crc='):
-                    index += 1
-                    field = -1
-                    continue
-
-                # Ignore BOOT=xxx
-                if field_str.lower().startswith('boot='):
+                if field_str.lower().startswith('crc=') or field_str.lower().startswith('boot='):
                     index += 1
                     field = -1
                     continue
@@ -194,25 +217,8 @@ class Inf:
                     field = -1
                     continue
 
-                # Hex field following special keyword is invalid
-                if field == -1:
-                    raise ValueError("unexpected inf field at #%d: '%s'" % (index, field_str))
+                cls._assign_field(items, order, field, field_str, index)
 
-                # More hex fields than expected
-                if field >= len(order):
-                    raise ValueError("too many inf fields at #%d: '%s'" % (index, field_str))
-
-                # Assign consecutive hex fields
-                field_name = order[field]
-                try:
-                    field_value = int(field_str, 16)
-                except ValueError as err:
-                    if len(err.args) > 0:
-                        err.args = ("%s in inf field #%d (%s): '%s'" %
-                                    (err.args[0], index, field_name, field_str), )
-                    raise
-
-                items[field_name] = field_value
                 field += 1
                 index += 1
 
@@ -257,6 +263,23 @@ class Inf:
             inf_file.write(data)
 
     @classmethod
+    def _get_inf_line(cls, path: str) -> str:
+        data: Optional[str] = None
+
+        # Allow only one line of text, don't throw if followed some empty lines
+        with open(path, "r") as inf_file:
+            for line in inf_file:
+                if data is None:
+                    data = line
+                elif len(line.strip()) != 0:
+                    raise ValueError('excessive lines in inf file')
+
+        if data is None:
+            raise ValueError('empty inf file')
+
+        return data
+
+    @classmethod
     def load(cls, path: str, allow_spaces=True, no_throw=False) -> 'Inf':
         """Load inf data from file.
 
@@ -273,18 +296,7 @@ class Inf:
             OSError: reading inf file failed
         """
         try:
-            data: Optional[str] = None
-
-            # Allow only one line of text, don't throw if followed some empty lines
-            with open(path, "r") as inf_file:
-                for line in inf_file:
-                    if data is None:
-                        data = line
-                    elif len(line.strip()) != 0:
-                        raise ValueError('excessive lines in inf file')
-
-            if data is None:
-                raise ValueError('empty inf file')
+            data = cls._get_inf_line(path)
 
             # Read inf data from first line
             inf = cls.from_string(data, allow_spaces, no_throw)
@@ -293,6 +305,7 @@ class Inf:
                 if file_size != inf.size:
                     raise ValueError("file size in inf (%d) doesn't match actual size (%d)"
                                      % (inf.size, file_size))
+
             inf.inf_path = path
 
             return inf
@@ -330,14 +343,16 @@ class InfDirectoryCache:
         with os.scandir(self.dir_path) as f_iter:
             for entry in f_iter:
                 # Skip files not ending with .inf
-                if not entry.is_file() or not entry.name.lower().endswith(".inf"):
+                # Skip inf file if there is no matching data file
+                if (not entry.is_file()
+                        or not entry.name.lower().endswith(".inf")
+                        or not os.path.exists(entry.name[:-4])):
                     continue
+
                 # Convert to lower case if possible
                 name = foldfilecase(self.dir_path, entry.name)
                 full_path = os.path.join(self.dir_path, name)
-                # Skip inf file if there is no matchin data file
-                if not os.path.exists(full_path[:-4]):
-                    continue
+
                 # Try to load the file, on exception issue warning and continue
                 try:
                     inf = Inf.load(full_path, no_throw=False)
@@ -356,6 +371,7 @@ class InfDirectoryCache:
             if inf_name not in data_map:
                 # Map 'Inf' objects by inf file name
                 self.inf_map[inf_name] = inf
+
         # Iterate over data files matched for infs
         for data_path, inf_name in data_map.items():
             # Ignore data file if inf has been 'cancelled'

@@ -250,7 +250,8 @@ class _AddImageAction(argparse.Action):
             choices=choices, required=required, help=help,
             metavar=metavar)
 
-    def _get_dest(self, parser, namespace):
+    @staticmethod
+    def _get_dest(parser, namespace):
         images = None
         selected = None
 
@@ -546,7 +547,8 @@ class _DumpProcess(_Process):
         else:
             Sectors.hexdump_buffer(data, width=self.width, ellipsis=self.ellipsis)
 
-    def show_digest(self, image: Image, name: str, drive: str, digest: str):
+    def show_digest(self, image: Image, name: Optional[str],
+                    drive: Optional[int], digest: str):
         "Show digest and optional name prefix"
         if self.name == 0:
             print(digest)
@@ -864,7 +866,7 @@ class _ModifyProcess(_Process):
                     entry.locked = locked
         print("%s: %d files changed" % (image.filename, count))
 
-    def _cmd_format(self, image: Image):
+    def _cmd_format(self, image: Image):  # pylint: disable=no-self-use
         image.format()
 
     def _cmd_delete(self, image: Image):

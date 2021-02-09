@@ -4,8 +4,10 @@ import sys
 import hashlib
 
 from typing import Tuple, Optional, Generator, Sequence, Union, List
-from typing import Dict
+from typing import Dict, Iterable
 from typing import cast
+
+from . import simplewarn
 
 from .simplewarn import warn
 
@@ -14,6 +16,7 @@ from .consts import SECTORS, MAX_FILES, SINGLE_SECTORS, DOUBLE_SECTORS
 from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE
 from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO, LIST_FORMAT_RAW
 from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
+from .consts import WARN_ALL, WARN_FIRST, WARN_NONE
 
 from .misc import bchr, json_dumps, xml_dumps
 from .misc import LazyString, ValidationWarning
@@ -129,8 +132,8 @@ class Side:
             raise ValueError("title too long")
         vbytes = unicode_to_bbc(value).ljust(12, chr(0)).encode("ascii")
         self.modified = True
-        self.csector1[0:8] = vbytes[0:8]
-        self.csector2[0:4] = vbytes[8:12]
+        self.csector1[0:8] = vbytes[0:8]  # type: ignore
+        self.csector2[0:4] = vbytes[8:12]  # type: ignore
 
     @property
     def sequence_number(self) -> int:
@@ -144,7 +147,7 @@ class Side:
     @sequence_number.setter
     def sequence_number(self, value: int) -> None:
         self.modified = True
-        self.csector2[4] = to_bcd(value)
+        self.csector2[4] = to_bcd(value)  # type: ignore
 
     @property
     def last_entry_offset(self) -> int:
@@ -164,7 +167,7 @@ class Side:
         if value & 7 != 0 or value > 248 or value < 0:
             raise ValueError("invalid end of catalog offset value")
         self.modified = True
-        self.csector2[5] = value
+        self.csector2[5] = value  # type: ignore
 
     @property
     def number_of_files(self) -> int:
@@ -202,7 +205,7 @@ class Side:
     @opt_byte.setter
     def opt_byte(self, value: int) -> None:
         self.modified = True
-        self.csector2[6] = value
+        self.csector2[6] = value  # type: ignore
 
     @property
     def opt(self) -> int:
@@ -251,8 +254,8 @@ class Side:
         if value not in (SINGLE_SECTORS, DOUBLE_SECTORS):
             raise ValueError("invalid total number of sectors")
         self.modified = True
-        self.csector2[7] = value & 255
-        self.csector2[6] = (self.csector2[6] & ~3) | ((value >> 8) & 3)
+        self.csector2[7] = value & 255  # type: ignore
+        self.csector2[6] = (self.csector2[6] & ~3) | ((value >> 8) & 3)  # type: ignore
 
     @property
     def used_sectors(self) -> int:
@@ -623,7 +626,7 @@ class Side:
         """Textual representation."""
         return self.__str__()
 
-    def validate(self, warnall: bool = False) -> bool:
+    def validate(self, warn_mode: int = WARN_FIRST) -> bool:
         """Validate catalog.
 
         Validate catalog data and file entries. Issue a warning and return
@@ -634,41 +637,52 @@ class Side:
             A boolean indicating if catalog is valid.
         """
         isvalid = True
-        if ((isvalid or warnall)
-                and self.number_of_sectors != DOUBLE_SECTORS
-                and self.number_of_sectors != SINGLE_SECTORS):
-            isvalid = False
-            warn(ValidationWarning("Invalid total number of sectors (%d)" % self.number_of_sectors))
-        if (isvalid or warnall) and self.number_of_sectors > self.total_sectors:
-            isvalid = False
-            warn(ValidationWarning("Number of sectors in directory (%d) greater than "
-                                   "the number of physical sectors (%d)" %
-                                   (self.number_of_sectors, self.total_sectors)))
-        if (isvalid or warnall) and self.last_entry_offset & 7 != 0:
-            isvalid = False
-            warn(ValidationWarning("Invalid end of catalog value (0x%02x)"
-                                   % self.last_entry_offset))
-        if (isvalid or warnall) and self.opt_byte & 0xcc != 0:
-            isvalid = False
-            warn(ValidationWarning("Invalid option byte or unsupported format (0x%02x)"
-                                   % self.opt_byte))
-        index = 0
-        end_sector = self.number_of_sectors
-        nfiles = self.number_of_files
-        badorder = False
-        while (isvalid or warnall) and index < nfiles:
-            entry = self.get_entry(index)
-            isvalid &= entry.validate(warnall)
-            if (isvalid or warnall) and entry.end_sector > end_sector:
-                # Files are either overlapping or at least not ordered properly
-                warn(ValidationWarning("Catalog entries are not ordered properly in entry #%s"
-                                       % index))
-                badorder = True
+        warnall = warn_mode == WARN_ALL
+
+        if warn_mode == WARN_NONE:
+            simplewarn.mute(ValidationWarning)
+
+        try:
+
+            if ((isvalid or warnall)
+                    and self.number_of_sectors != DOUBLE_SECTORS
+                    and self.number_of_sectors != SINGLE_SECTORS):
                 isvalid = False
-            end_sector = entry.start_sector
-            index += 1
-        if badorder:
-            self.check_sectors_allocation(warnall)
+                warn(ValidationWarning("Invalid total number of sectors (%d)"
+                                       % self.number_of_sectors))
+            if (isvalid or warnall) and self.number_of_sectors > self.total_sectors:
+                isvalid = False
+                warn(ValidationWarning("Number of sectors in directory (%d) greater than "
+                                       "the number of physical sectors (%d)"
+                                       % (self.number_of_sectors, self.total_sectors)))
+            if (isvalid or warnall) and self.last_entry_offset & 7 != 0:
+                isvalid = False
+                warn(ValidationWarning("Invalid end of catalog value (0x%02x)"
+                                       % self.last_entry_offset))
+            if (isvalid or warnall) and self.opt_byte & 0xcc != 0:
+                isvalid = False
+                warn(ValidationWarning("Invalid option byte or unsupported format (0x%02x)"
+                                       % self.opt_byte))
+            index = 0
+            end_sector = self.number_of_sectors
+            nfiles = self.number_of_files
+            badorder = False
+            while (isvalid or warnall) and index < nfiles:
+                entry = self.get_entry(index)
+                isvalid &= entry.validate(warnall)
+                if (isvalid or warnall) and entry.end_sector > end_sector:
+                    # Files are either overlapping or at least not ordered properly
+                    warn(ValidationWarning("Catalog entries are not ordered properly in entry #%s"
+                                           % index))
+                    badorder = True
+                    isvalid = False
+                end_sector = entry.start_sector
+                index += 1
+            if badorder:
+                self.check_sectors_allocation(warnall)
+
+        finally:
+            simplewarn.unmute(ValidationWarning)
 
         return isvalid
 
@@ -720,6 +734,7 @@ class Side:
         Returns:
             Dictionary of floppy side properties or list of files properties.
         """
+        # pylint: disable=no-member
         if level >= 0:
             attrs = {
                 'side': self.head+1,
@@ -735,6 +750,7 @@ class Side:
                 'sha1_files': LazyString(cast(Property['Side', str], Side.sha1files).fget, self),
                 'sha1_used': LazyString(cast(Property['Side', str], Side.sha1used).fget, self)
                 }
+        # pylint: enable=no-member
 
         if level == 0:
             attrs['image_path'] = self.image.path
@@ -809,6 +825,21 @@ class Side:
                          LIST_FORMAT_JSON, LIST_FORMAT_XML):
             raise ValueError("invalid listing format")
 
+    @staticmethod
+    def _print_cat_lines(entries: Iterable[Entry], file):
+        """Print catalog lines, two files per line."""
+        fname1 = None
+        for entry in entries:
+            fname = entry.listing_entry(LIST_FORMAT_CAT)
+            if fname1 is not None:
+                print('%-20s%s' % (fname1, fname), file=file)
+                fname1 = None
+            else:
+                fname1 = fname
+        if fname1 is not None:
+            print(fname1, file=file)
+            fname1 = None
+
     def listing(self, fmt: Union[int, str] = None, pattern: Union[str, List[str]] = None,
                 header_fmt: Union[int, str] = None, footer_fmt: Union[int, str] = None,
                 sort: bool = None, file=sys.stdout) -> None:
@@ -847,59 +878,42 @@ class Side:
         Raises:
             ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
         """
-        if fmt is None:
-            fmt = LIST_FORMAT_CAT
+        fmt = LIST_FORMAT_CAT if fmt is None else fmt
 
-        if header_fmt is None and not isinstance(fmt, str):
-            header_fmt = fmt
+        header_fmt = fmt if header_fmt is None and not isinstance(fmt, str) else header_fmt
+
         if header_fmt is not None and header_fmt != '':
             self.listing_header(header_fmt, file=file)
 
-        if sort is None:
-            sort = (fmt == LIST_FORMAT_CAT)
+        sort = (fmt == LIST_FORMAT_CAT) if sort is None else sort
+
         entries = self.get_files(pattern)
         if sort:
             entries.sort()
 
-        if fmt == '':
-            pass
-        elif fmt == LIST_FORMAT_CAT:
-            fname1 = None
-            for entry in (e for e in entries if e.directory == self.image.current_dir):
-                fname = entry.listing_entry(fmt)
-                if fname1 is not None:
-                    print('%-20s%s' % (fname1, fname), file=file)
-                    fname1 = None
-                else:
-                    fname1 = fname
-            if fname1 is not None:
-                print(fname1, file=file)
-                fname1 = None
+        if fmt == LIST_FORMAT_CAT:
+            self._print_cat_lines((e for e in entries
+                                   if e.directory == self.image.current_dir), file)
             print('', file=file)
-            for entry in (e for e in entries if e.directory != self.image.current_dir):
-                fname = entry.listing_entry(fmt)
-                if fname1 is not None:
-                    print('%-20s%s' % (fname1, fname), file=file)
-                    fname1 = None
-                else:
-                    fname1 = fname
-            if fname1 is not None:
-                print(fname1, file=file)
-                fname1 = None
+            self._print_cat_lines((e for e in entries
+                                   if e.directory != self.image.current_dir), file)
+
         elif fmt == LIST_FORMAT_JSON:
             attrs = self.get_properties(for_format=False, recurse=True,
                                         level=0, pattern=pattern)
             print(json_dumps(attrs), file=file, end='')
+
         elif fmt == LIST_FORMAT_XML:
             attrs = self.get_properties(for_format=False, recurse=True,
                                         level=0, pattern=pattern)
             print(xml_dumps(attrs, "side"), file=file)
+
         elif (fmt in (LIST_FORMAT_RAW, LIST_FORMAT_INFO, LIST_FORMAT_INF, LIST_FORMAT_TABLE)
               or isinstance(fmt, str)):
             for entry in entries:
-                if entry.match(pattern):
-                    print(entry.listing_entry(fmt), file=file)
-        else:
+                print(entry.listing_entry(fmt), file=file)
+
+        elif fmt != '':
             raise ValueError("invalid listing format")
 
         if footer_fmt is not None and footer_fmt != '':
@@ -979,39 +993,44 @@ class Side:
         Returns:
             Validation result. False if files overlap.
         """
+        def warn_if(cond: bool, warning):
+            if cond:
+                warn(warning)
+
         invalid = False
         sectors_map = bytearray(bchr(0) * self.number_of_sectors)
         sectors_map[CATALOG_SECTOR1] = 254
         sectors_map[CATALOG_SECTOR2] = 254
         for file in self.files:
             if file.end_sector > self.number_of_sectors or file.end_sector < 0:
-                # we shouldn't be here - Side.validate should have failed
-                if not invalid or warnall:
-                    invalid = True
-                    warn(ValidationWarning("File #%d sector number invalid"
-                                           % (file.index + 1)))
+                warn_if(not invalid or warnall,
+                        ValidationWarning("File #%d sector number invalid" % (file.index + 1)))
+                invalid = True
                 continue
+
             if file.start_sector > self.number_of_sectors or file.start_sector < 0:
-                # we shouldn't be here - Side.validate should have failed
-                if not invalid or warnall:
-                    invalid = True
-                    warn(ValidationWarning("File #%d sector number invalid"
-                                           % (file.index + 1)))
+                warn_if(not invalid or warnall,
+                        ValidationWarning("File #%d sector number invalid" % (file.index + 1)))
+                invalid = True
                 continue
+
             for logical_sector in range(file.start_sector, file.end_sector):
                 if sectors_map[logical_sector] == 254:
-                    if not invalid or warnall:
-                        invalid = True
-                        warn(ValidationWarning("File #%d overlaps catalog sectors"
-                                               % (file.index + 1)))
+                    warn_if(not invalid or warnall,
+                            ValidationWarning("File #%d overlaps catalog sectors"
+                                              % (file.index + 1)))
+                    invalid = True
                     continue
-                if sectors_map[logical_sector] == 254:
-                    if not invalid or warnall:
-                        invalid = True
-                        warn(ValidationWarning("File #%d overlaps file #%d" %
-                                               (file.index + 1, sectors_map[logical_sector])))
+
+                if sectors_map[logical_sector] != 0:
+                    warn_if(not invalid or warnall,
+                            ValidationWarning("File #%d overlaps file #%d"
+                                              % (file.index + 1, sectors_map[logical_sector])))
+                    invalid = True
                     continue
+
                 sectors_map[logical_sector] = file.index + 1
+
         return not invalid
 
     def format(self, tracks: int = None) -> None:
@@ -1027,8 +1046,8 @@ class Side:
             tracks = self.image.tracks
         self.get_all_sectors().fill(0xe5)
         empty = bytes(SECTOR_SIZE)
-        self.csector1[:] = empty
-        self.csector2[:] = empty
+        self.csector1[:] = empty  # type: ignore
+        self.csector2[:] = empty  # type: ignore
         self.number_of_sectors = tracks * SECTORS
 
     def readall(self) -> bytes:

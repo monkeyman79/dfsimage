@@ -115,4 +115,5 @@ def xml_dumps(obj: object, root_name: str) -> str:
 
     root = ET.Element(root_name)
     _xml_add(obj, root, root_name)
-    return ET.tostring(root, encoding="utf-8", xml_declaration=False).decode("utf-8")
+    return ET.tostring(root, encoding="utf-8",  # type: ignore
+                       xml_declaration=False).decode("utf-8")

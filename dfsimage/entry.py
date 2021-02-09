@@ -85,7 +85,7 @@ class Entry:
         if len(value) != 1 or not Entry.isnamechar(value[0]):
             raise ValueError("invalid directory name")
         self.side.modified = True
-        self.entry1[7] = (self.entry1[7] & 128) | value[0]
+        self.entry1[7] = (self.entry1[7] & 128) | value[0]  # type: ignore
 
     def __get_directory(self, pure_ascii: bool = False) -> str:
         directory = self.directory_bytes.decode("ascii")
@@ -119,7 +119,7 @@ class Entry:
         if len(value) != 7 or any(not Entry.isnamechar(x) for x in value):
             raise ValueError("invalid file name")
         self.side.modified = True
-        self.entry1[0:7] = value
+        self.entry1[0:7] = value  # type: ignore
 
     def __get_filename(self, pure_ascii: bool = False) -> str:
         value = self.filename_bytes.decode("ascii")
@@ -234,7 +234,7 @@ class Entry:
     def locked(self, value: bool) -> None:
         bitval = 128 if value else 0
         self.side.modified = True
-        self.entry1[7] = (self.entry1[7] & 127) | bitval
+        self.entry1[7] = (self.entry1[7] & 127) | bitval  # type: ignore
 
     @property
     def access(self) -> str:
@@ -294,7 +294,7 @@ class Entry:
     def start_sector(self, value: int) -> None:
         high = (value >> 8) & 3
         self.side.modified = True
-        self.entry2[7] = value & 0xFF
+        self.entry2[7] = value & 0xFF  # type: ignore
         self.set_high_bits(0, high)
 
     @property
@@ -438,8 +438,8 @@ class Entry:
     def clear(self) -> None:
         """Clear catalog entry."""
         self.side.modified = True
-        self.entry1[:] = bytes(8)
-        self.entry2[:] = bytes(8)
+        self.entry1[:] = bytes(8)  # type: ignore
+        self.entry2[:] = bytes(8)  # type: ignore
 
     def validate(self, warnall: bool = False) -> bool:
         """Validate catalog entry.
@@ -506,7 +506,7 @@ class Entry:
         """
         mask = 3 << (2 * index)
         bits = (value & 3) << (2 * index)
-        self.entry2[6] = (self.entry2[6] & ~mask) | bits
+        self.entry2[6] = (self.entry2[6] & ~mask) | bits  # type: ignore
 
     PROPERTY_NAMES = {
         "index": "File entry index.",
@@ -773,4 +773,4 @@ class Entry:
     @staticmethod
     def set_word(buffer: memoryview, value: int) -> None:
         """Write unsigned short integer value to two-bytes buffer in little-endian byte order."""
-        buffer[:] = value.to_bytes(2, 'little')
+        buffer[:] = value.to_bytes(2, 'little')  # type: ignore

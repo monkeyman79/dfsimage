@@ -21,12 +21,12 @@ from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO
 from .consts import LIST_FORMAT_RAW
 from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
 from .consts import OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING, OPEN_MODE_NEW
-from .consts import WARN_FIRST, WARN_ALL, WARN_NONE
+from .consts import WARN_FIRST
 from .consts import INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER
 from .consts import TRANSLATION_STANDARD, TRANSLATION_SAFE
 
 from .misc import bchr, LazyString, json_dumps, xml_dumps
-from .misc import ValidationWarning, DFSWarning
+from .misc import DFSWarning
 
 from .conv import unicode_to_bbc, NAME_SAFE_TRANS, NAME_STD_TRANS
 
@@ -57,6 +57,12 @@ class Image:
                 stored continuously as opposed to default layout where track data
                 for each side are interleaved.
         """
+        if heads not in (1, 2):
+            raise ValueError("invalid number of disc sides")
+
+        if tracks not in (SINGLE_TRACKS, DOUBLE_TRACKS):
+            raise ValueError("invalid number of tracks per side")
+
         self._modified = False
         if heads == 1:
             self.linear = True
@@ -563,7 +569,7 @@ class Image:
         return "%d side%s %d tracks" % (heads,
                                         "" if heads == 1 else "s", tracks)
 
-    def validate(self, warnall: bool = False) -> bool:
+    def validate(self, warn_mode: int = WARN_FIRST) -> bool:
         """Validate disk image.
 
         Validate disk image. Raise exception if a fatal error is encountered.
@@ -578,7 +584,7 @@ class Image:
 
         # Validate both sides
         for side in self.sides:
-            isvalid &= side.validate(warnall)
+            isvalid &= side.validate(warn_mode)
 
         self.isvalid = isvalid
 
@@ -1289,92 +1295,45 @@ class Image:
             varbose: Optional; List files as they are being imported.
             default_head: Default disk side.
         """
+        import_proc = _ImportFiles(self, os_files, dfs_names, inf_mode,
+                                   load_addr, exec_addr, locked, replace,
+                                   ignore_access, no_compact, continue_on_error,
+                                   verbose, default_head)
+
+        return import_proc.run()
+
+    def _validate_export_params(self, translation, inf_mode, output) -> Tuple:
         self._not_closed()
 
-        count = 0
-
-        if default_head is None:
-            default_head = self._default_head
+        if translation is None:
+            translation = TRANSLATION_STANDARD
 
         if inf_mode is None:
-            inf_mode = INF_MODE_AUTO
-        if inf_mode not in (INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER):
-            raise ValueError('invalid inf mode')
-        if isinstance(os_files, str):
-            os_files = [os_files]
-        if dfs_names is not None:
-            if isinstance(dfs_names, str):
-                dfs_names = [dfs_names]
-            if len(dfs_names) != len(os_files):
-                raise ValueError("size of dfs_names parameter doesn't match "
-                                 "number of files to import")
-        filelist = self.scan_inf_files(os_files, dfs_names, inf_mode)
-        for file_tuple in filelist:
-            displayname = file_tuple[0]
-            hostfile = file_tuple[1]
-            basename = file_tuple[2]
-            dfs_name = file_tuple[3]
-            inf = file_tuple[5]
-            # Start with attributes passed directly
-            f_load_addr = load_addr
-            f_exec_addr = exec_addr
-            f_locked = locked
-            # Update with attributes from inf file if present
-            if inf is not None:
-                if f_load_addr is None and inf.load_addr is not None:
-                    f_load_addr = inf.load_addr
-                if f_exec_addr is None and inf.exec_addr is not None:
-                    f_exec_addr = inf.exec_addr
-                if f_locked is None and inf.locked is not None:
-                    f_locked = inf.locked
-                if dfs_name is None and inf.filename is not None:
-                    dfs_name = inf.filename
-            # Exec addr defaults to load addr
-            if f_exec_addr is None and f_load_addr is not None:
-                f_exec_addr = f_load_addr
+            inf_mode = INF_MODE_ALWAYS
 
-            # If dfs name is not given, use host file name
-            if dfs_name is None:
-                dfs_name = basename
+        # Get and validate characters translation table
+        if not isinstance(translation, bytes):
+            if translation == TRANSLATION_STANDARD:
+                translation = NAME_STD_TRANS
+            elif translation == TRANSLATION_SAFE:
+                translation = NAME_SAFE_TRANS
+            else:
+                raise ValueError("invalid translation mode")
+        if isinstance(translation, bytes):
+            if len(translation) != 256:
+                raise ValueError("translation table must be 256 bytes long")
+        else:
+            raise ValueError("invalid translation mode")
 
-            try:
-                new_inf: Inf
-                # Read file data
-                with open(hostfile, "rb") as file:
-                    data = file.read()
+        # If output ends with directory name, append dfs full name
+        if output in ('', '.'):
+            output = './'
 
-                # Add file to disk image
-                entry = self.add_file(dfs_name, data, f_load_addr, f_exec_addr,
-                                      locked=locked, replace=replace,
-                                      ignore_access=ignore_access,
-                                      no_compact=no_compact,
-                                      default_head=default_head)
-                new_inf = entry.get_inf()
+        _, tail = os.path.split(output)
+        if tail == '' or os.path.exists(output) and os.path.isdir(output):
+            output = os.path.join(output, '{displayname}')
 
-                if verbose:
-                    if inf is not None:
-                        src_name = "%s, %s" % (displayname, os.path.basename(inf.inf_path))
-                    else:
-                        src_name = displayname
-                    print("%-40s <- %s" % (str(new_inf), src_name))
-
-                count += 1
-
-            except (FileExistsError, PermissionError, OSError) as err:
-                if not continue_on_error:
-                    raise
-                warn(DFSWarning(str(err)))
-
-            except (RuntimeError) as err:
-                if not continue_on_error:
-                    raise
-                warn(DFSWarning(str(err)))
-                break
-
-        if count != len(filelist):
-            warn(DFSWarning("%s: %d files not imported"
-                            % (self.filename, len(filelist) - count)))
-        return count
+        return translation, inf_mode, output
 
     def export_files(self, output: str,
                      files: Union[str, List[str]] = None,
@@ -1425,126 +1384,12 @@ class Image:
             default_head: Disk side. Overrides Image.default_side property.
                 If not present, files from both sides are exported.
         """
-        self._not_closed()
 
-        if translation is None:
-            translation = TRANSLATION_STANDARD
-
-        if inf_mode is None:
-            inf_mode = INF_MODE_ALWAYS
-
-        # Get and validate characters translation table
-        if not isinstance(translation, bytes):
-            if translation == TRANSLATION_STANDARD:
-                translation = NAME_STD_TRANS
-            elif translation == TRANSLATION_SAFE:
-                translation = NAME_SAFE_TRANS
-            else:
-                raise ValueError("invalid translation mode")
-        if isinstance(translation, bytes):
-            if len(translation) != 256:
-                raise ValueError("translation table must be 256 bytes long")
-        else:
-            raise ValueError("invalid translation mode")
-
-        # If output ends with directory name, append dfs full name
-        if output in ('', '.'):
-            output = './'
-
-        _, tail = os.path.split(output)
-        if tail == '' or os.path.exists(output) and os.path.isdir(output):
-            output = os.path.join(output, '{displayname}')
-
-        # Get list of files to export
-        entries = self.get_files(files, default_head)
-        inf_cache = InfCache()
-
-        count = 0
-        skipped = 0
-
-        # Check for existing or conflicting files and directories
-        output_set: Set[str] = set()
-        for entry in entries:
-            # Get file properties to build file name
-            props = entry.get_properties(True)
-            fullname = (entry.fullname_bytes.translate(translation)
-                        .lstrip().decode("ascii"))
-            filename = (entry.filename_bytes.translate(translation)
-                        .decode("ascii"))
-            directory = (entry.directory_bytes.translate(translation)
-                         .decode("ascii"))
-            displayname = (entry.displayname_bytes.translate(translation)
-                           .lstrip().decode("ascii"))
-            props["fullname"] = fullname
-            props["filename"] = filename
-            props["directory"] = directory
-            props["displayname"] = displayname
-            output_name = output.format_map(props)
-
-            # Name to put in inf
-            if len(self.sides) != 1 and include_drive:
-                dfs_name = ":%d.%s" % (entry.drive, entry.fullname_ascii.lstrip())
-            else:
-                dfs_name = entry.fullname_ascii.lstrip()
-
-            inf_mode_for_file = inf_mode
-            # Enable inf for auto mode if required
-            if (inf_mode == INF_MODE_AUTO
-                    and (os.path.basename(output_name) != dfs_name
-                         or entry.load_address != 0 or entry.exec_address != 0
-                         or entry.locked)):
-                inf_mode_for_file = INF_MODE_ALWAYS
-
-            # Check if file exists
-            dirname, filename, = os.path.split(output_name)
-            try:
-                data_name, inf_name = self._find_available(
-                    dirname, filename, dfs_name, replace,
-                    inf_mode_for_file, inf_cache,
-                    output_set)
-            except FileExistsError as err:
-                if not continue_on_error:
-                    raise
-                warn(DFSWarning(str(err)))
-                skipped += 1
-                continue
-
-            data = entry.readall()
-            inf = entry.get_inf()
-            inf.filename = dfs_name
-
-            # Check if directory exists
-            if dirname != '' and not os.path.exists(dirname):
-                if not create_directories:
-                    raise FileNotFoundError(
-                        "output directory '%s' doesn't exist" % dirname)
-                os.makedirs(dirname)
-                print("created directory '%s'" % dirname)
-
-            with open(data_name, "wb") as file:
-                file.write(data)
-
-            if inf_name is not None:
-                inf.inf_path = canonpath(inf_name)
-                inf.save()
-                inf.inf_path = canonpath(inf_name)
-                inf_cache.update(inf.inf_path, inf)
-
-            if verbose:
-                if inf_name is not None:
-                    v_name = "%s, %s" % (data_name, os.path.basename(inf_name))
-                else:
-                    v_name = data_name
-                print("%-40s -> %s" % (str(inf), v_name))
-
-            output_set.add(canonpath(data_name))
-            count += 1
-
-        if skipped != 0:
-            warn(DFSWarning("%s: %d files not exported"
-                            % (self.filename, skipped)))
-
-        return count
+        export_proc = _ExportFiles(self, output, files, create_directories,
+                                   translation, inf_mode, include_drive,
+                                   replace, continue_on_error, verbose,
+                                   default_head)
+        return export_proc.run()
 
     def compact(self) -> None:
         """Compact fragmented free space on disk.
@@ -1570,6 +1415,29 @@ class Image:
             for side in self.sides:
                 side.format()
 
+    def _validate_copy_over(self, source: 'Image', default_head: Optional[int]):
+
+        if not isinstance(source, Image):
+            raise ValueError("source must be Image")
+
+        # pylint: disable = protected-access
+        self._not_closed()
+        source._not_closed()
+
+        # Source and destination can be the same file if we copy from one side to the other
+        if os.path.sameopenfile(self.file.fileno(),  # type: ignore[union-attr]
+                                source.file.fileno()):  # type: ignore[union-attr]
+            if (default_head is None or source._default_head is None or
+                    default_head == source._default_head):
+                raise ValueError("source and destination is the same image file")
+
+    def _validate_backup(self, source: 'Image', default_head: Optional[int]):
+
+        self._validate_copy_over(source, default_head)
+
+        if source.tracks > self.tracks:
+            raise ValueError("cannot copy 80 tracks floppy to 40 tracks.")
+
     def backup(self, source: 'Image', default_head: int = None):
         """Copy all sectors data from other image.
 
@@ -1579,35 +1447,21 @@ class Image:
                 Image.default_side property. If not present, both sides are
                 copied from source.
         """
-        if not isinstance(source, Image):
-            raise ValueError("source must be Image")
-
-        # pylint: disable = protected-access
-        self._not_closed()
-        source._not_closed()
 
         if default_head is None:
             default_head = self._default_head
 
-        # Source and destination can be the same file if we backup one side to the other
-        if os.path.sameopenfile(self.file.fileno(),  # type: ignore[union-attr]
-                                source.file.fileno()):  # type: ignore[union-attr]
-            if (default_head is None or source._default_head is None or
-                    default_head == source._default_head):
-                raise ValueError("source and destination is the same image file")
-
-        if source.tracks > self.tracks:
-            raise ValueError("cannot copy 80 tracks floppy to 40 tracks.")
+        self._validate_backup(source, default_head)
 
         if source._default_head is not None:
-            source_sides = (source.sides[source._default_head],)
+            source_sides: Tuple[Side, ...] = (source.sides[source._default_head],)
         else:
-            source_sides = source.sides   # type: ignore[assignment]
+            source_sides = source.sides
 
         if default_head is not None:
-            dest_sides = (self.sides[default_head],)
+            dest_sides: Tuple[Side, ...] = (self.sides[default_head],)
         else:
-            dest_sides = self.sides   # type: ignore[assignment]
+            dest_sides = self.sides
 
         if len(source_sides) > len(dest_sides):
             raise ValueError("source side must be selected.")
@@ -1641,24 +1495,13 @@ class Image:
             varbose: Optional; List files as they are being imported.
             default_head: Default target disk side.
         """
-        # pylint: disable = protected-access
-        if not isinstance(source, Image):
-            raise ValueError("source must be Image")
-
-        self._not_closed()
-        source._not_closed()
 
         count = 0
 
         if default_head is None:
             default_head = self._default_head
 
-        # Source and destination can be the same file if we copy from one side to the other
-        if os.path.sameopenfile(self.file.fileno(),  # type: ignore[union-attr]
-                                source.file.fileno()):  # type: ignore[union-attr]
-            if (default_head is None or source._default_head is None or
-                    default_head == source._default_head):
-                raise ValueError("source and destination is the same image file")
+        self._validate_copy_over(source, default_head)
 
         files = source.get_files(pattern)
 
@@ -1701,136 +1544,6 @@ class Image:
                             % (self.filename, len(files) - count)))
         return count
 
-    @staticmethod
-    def _find_available(dirname: str, filename: str, dfs_name: str,
-                        replace: bool,
-                        inf_mode: int, inf_cache: InfCache,
-                        output_set: Set[str]) -> Tuple[str, Optional[str]]:
-        """Find available host filename, append numbers if required."""
-
-        done = False
-        index = 0
-        check_name: Optional[str] = filename
-        use_inf = inf_mode == INF_MODE_ALWAYS
-
-        while not done:
-            path = os.path.join(dirname, cast(str, check_name))
-            canon = canonpath(path)
-            inf_path = None
-
-            if inf_mode != INF_MODE_NEVER:
-                inf: Optional[Inf] = inf_cache.get_inf_by_host_file(path)
-            else:
-                inf = None
-
-            if inf is not None:
-                # Inf path exists, check if it's the same dfs name
-                if inf.filename == dfs_name:
-                    inf_path = inf.inf_path
-                    # Already exists for the same dfs name
-                    if not replace and canon in output_set:
-                        raise FileExistsError("not overwriting file '%s', just created for ':%d.%s'"
-                                              % (path, inf.drive, inf.filename))
-
-                    if not replace:
-                        raise FileExistsError("file '%s' already exists for '%s'"
-                                              % (path, inf.filename))
-                    if canon in output_set:
-                        warn(DFSWarning("overwriting file '%s', just created for ':%d.%s'"
-                                        % (path, inf.drive, inf.filename)))
-                        break
-                    # Silently overwrite
-                    break
-
-            elif os.path.exists(path):
-                # Data file exists.
-                if not replace and canon in output_set:
-                    raise FileExistsError("not overwriting just created file '%s'"
-                                          % path)
-
-                if not replace:
-                    raise FileExistsError("file '%s' already exists" % path)
-
-                if canon in output_set:
-                    warn(DFSWarning("overwriting just created file '%s'"
-                                    % path))
-                    break
-                # Silently overwrite
-                break
-
-            else:
-                # Name free to use
-                break
-
-            index += 1
-            check_name = "%s-%02d" % (filename, index)
-
-        if not use_inf:
-            return path, None
-
-        if inf_path is None:
-            inf_path = "%s.inf" % path
-
-        return path, inf_path
-
-    @staticmethod
-    def scan_inf_files(hostfiles: List[str], dfs_names: List[str] = None,
-                       inf_mode: int = None):
-        """Scan inf files.
-
-        Scan file on list, classify inf and other files, pair matching
-        files and fill missing.
-        """
-        if inf_mode is None:
-            inf_mode = INF_MODE_AUTO
-        if inf_mode not in (INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER):
-            raise ValueError('invalid inf mode')
-
-        inf_cache = InfCache()
-        fileset: Set[str] = set()
-        files: List[Tuple[str, str, str, Optional[str], Optional[str], Optional[Inf]]] = []
-
-        index = 0
-        for file in hostfiles:
-            displayfile = file
-            if os.path.isdir(file):
-                warn(DFSWarning("skipping directory '%s'" % file))
-                index += 1
-                continue
-            inf = None
-            inf_file = None
-            dfs_name = None
-            basename = os.path.basename(file)
-
-            if dfs_names is not None:
-                dfs_name = dfs_names[index]
-
-            if inf_mode != INF_MODE_NEVER and file.lower().endswith(".inf"):
-                inf = inf_cache.get_inf_by_inf_file(file)
-                if inf is not None:
-                    displayfile = displayfile[:-4]
-                    inf_file = inf.inf_path
-                    host_file = inf_file[:-4]
-
-            if inf_mode != INF_MODE_NEVER and inf is None:
-                inf = inf_cache.get_inf_by_host_file(file)
-                if inf is not None:
-                    inf_file = inf.inf_path
-                    host_file = inf_file[:-4]
-
-            if inf is None:
-                host_file = canonpath(file)
-                if inf_mode == INF_MODE_ALWAYS:
-                    raise ValueError("missing inf file for %s" % host_file)
-
-            if host_file not in fileset:
-                fileset.add(host_file)
-                files.append((displayfile, host_file, basename, dfs_name, inf_file, inf))
-
-            index += 1
-
-        return files
-
     @classmethod
     def create(cls, fname: str, heads: int = None, tracks: int = None,
                linear: bool = None) -> 'Image':
@@ -1870,12 +1583,6 @@ class Image:
         if tracks is None:
             tracks = DOUBLE_TRACKS
 
-        if heads not in (1, 2):
-            raise ValueError("invalid number of disc sides")
-
-        if tracks not in (SINGLE_TRACKS, DOUBLE_TRACKS):
-            raise ValueError("invalid number of tracks per side")
-
         # Dual sided images with ssd extension are linear by default
         if linear is None:
             linear = bool(fname.lower().endswith(".ssd"))
@@ -1900,6 +1607,71 @@ class Image:
             raise
 
         return new_image
+
+    @classmethod
+    def _peek_number_of_tracks(cls, fname) -> int:
+        catalog_data = bytearray(CATALOG_SECTORS * SECTOR_SIZE)
+        with open(fname, 'rb') as file:
+            file.readinto(catalog_data)  # type: ignore[attr-defined]
+        sectors = catalog_data[263] + ((catalog_data[262] & 3) << 8)
+        if sectors == SINGLE_TRACKS * SECTORS:
+            return SINGLE_TRACKS
+        return DOUBLE_TRACKS
+
+    @classmethod
+    def _validate_minimal_size(cls, heads, fsize):
+
+        # Make sure that at least first side catalog sectors are present
+        if fsize < CATALOG_SECTORS * SECTOR_SIZE:
+            raise RuntimeError("disk image too small")
+
+        if heads is not None and (heads < 1 or heads > 2):
+            raise ValueError("invalid number of disc sides")
+
+        # Sanity check - image file size should be multiple of sector size
+        if fsize % SECTOR_SIZE != 0:
+            raise RuntimeError("invalid disk image size")
+
+    @classmethod
+    def _get_image_format(cls, fname: str, heads: Optional[int],
+                          tracks: Optional[int],
+                          linear: Optional[bool]) -> Tuple[int, int, int, bool]:
+
+        fsize = os.path.getsize(fname)
+
+        cls._validate_minimal_size(heads, fsize)
+
+        # Default to single side unless file extension is 'dsd' or image is bigger that
+        # max. single sided image
+        if heads is None:
+            heads = (2 if fname.lower().endswith(".dsd") or fsize > TRACK_SIZE * DOUBLE_TRACKS
+                     else 1)
+
+        # Default to 80 tracks
+        if tracks is None:
+            tracks = (DOUBLE_TRACKS if fsize <= SINGLE_TRACKS * SECTORS * SECTOR_SIZE * heads
+                      else cls._peek_number_of_tracks(fname))
+
+        # Dual sided images with 'ssd' extension are linear by default
+        if linear is None:
+            linear = fname.lower().endswith(".ssd")
+
+        # Single sided images are always linear
+        if heads == 1:
+            linear = False
+
+        # If double sided, make sure second side catalog sectors are present
+        if heads == 2:
+            if not linear:
+                if fsize < TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
+                    raise RuntimeError("disk image too small for %s"
+                                       % Image.sides_and_tracks_str(heads, tracks))
+            else:
+                if fsize < tracks * TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
+                    raise RuntimeError("disk image too small for linear %s"
+                                       % Image.sides_and_tracks_str(heads, tracks))
+
+        return fsize, heads, tracks, linear
 
     @classmethod
     def _load(cls, filename: str, for_write: bool = False,
@@ -1939,61 +1711,12 @@ class Image:
             return "%s: %s: %s" % (type(message).__name__, fname_base, str(message))
 
         try:
-            if warning_mode == WARN_NONE:
-                simplewarn.mute(ValidationWarning)
             simplewarn.current_format = formatmsg
-            fsize = os.path.getsize(fname)
 
-            # Make sure that at least first side catalog sectors are present
-            if fsize < CATALOG_SECTORS * SECTOR_SIZE:
-                raise RuntimeError("disk image too small")
+            fsize, heads, tracks, linear = cls._get_image_format(fname, heads,
+                                                                 tracks, linear)
 
-            if heads is not None and (heads < 0 or heads > 2):
-                raise ValueError("invalid number of disc sides")
-
-            # Sanity check - image file size should be multiple of sector size
-            if fsize % SECTOR_SIZE != 0:
-                raise RuntimeError("invalid disk image size")
-
-            # Default to single side unless file extension is 'dsd' or image is bigger that
-            # max. single sided image
-            if heads is None or heads == 0:
-                if fname.lower().endswith(".dsd") or fsize > TRACK_SIZE * DOUBLE_TRACKS:
-                    heads = 2
-                else:
-                    heads = 1
-
-            # Default to 80 tracks
-            if tracks is None or tracks == 0:
-                tracks = DOUBLE_TRACKS
-                if fsize <= SINGLE_TRACKS * SECTORS * SECTOR_SIZE * heads:
-                    catalog_data = bytearray(CATALOG_SECTORS * SECTOR_SIZE)
-                    with open(fname, 'rb') as file:
-                        file.readinto(catalog_data)  # type: ignore[attr-defined]
-                    sectors = catalog_data[263] + ((catalog_data[262] & 3) << 8)
-                    if sectors == SINGLE_TRACKS * SECTORS:
-                        tracks = SINGLE_TRACKS
-
-            # Dual sided images with 'ssd' extension are linear by default
-            if linear is None:
-                linear = fname.lower().endswith(".ssd")
-
-            # Single sided images are always linear
-            if heads == 1:
-                linear = False
-
-            # If double sided, make sure second side catalog sectors are present
-            if heads == 2:
-                if not linear:
-                    if fsize < TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
-                        raise RuntimeError("disk image too small for %s" %
-                                           Image.sides_and_tracks_str(heads, tracks))
-                else:
-                    if fsize < tracks * TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
-                        raise RuntimeError("disk image too small for linear %s" %
-                                           Image.sides_and_tracks_str(heads, tracks))
-
-            # Create new 'Image' and read file contents
+            # Create new 'Image' object and read file contents
             new_image = Image(fname, heads, tracks, linear)
             try:
                 new_image.path = fname
@@ -2010,9 +1733,9 @@ class Image:
                                        Image.sides_and_tracks_str(heads, tracks))
 
                 # Validate the image
-                new_image.validate(warnall=(warning_mode == WARN_ALL))
+                new_image.validate(warning_mode)
 
-                # Sanity check. Validate the image first to now how to calculate min_size
+                # Sanity check. Validate the image first to know how to calculate min_size
                 if fsize < new_image.min_size:
                     raise RuntimeError("disk image too small")
             except:  # noqa: E722
@@ -2025,7 +1748,6 @@ class Image:
             raise
 
         finally:
-            simplewarn.unmute(ValidationWarning)
             simplewarn.current_format = simplewarn.formatmsg
 
         return new_image
@@ -2142,3 +1864,414 @@ class Image:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close(exc_type is None)
         return False
+
+
+class _ImportFiles:
+
+    def __init__(self, image: Image, os_files: Union[str, List[str]],
+                 dfs_names: Optional[Union[str, List[str]]],
+                 inf_mode: Optional[int], load_addr: Optional[int],
+                 exec_addr: Optional[int], locked: Optional[bool],
+                 replace: bool, ignore_access: bool,
+                 no_compact: bool, continue_on_error: bool,
+                 verbose: bool, default_head: Optional[int]):
+        image._not_closed()
+
+        if default_head is None:
+            default_head = image._default_head
+
+        if inf_mode is None:
+            inf_mode = INF_MODE_AUTO
+        if inf_mode not in (INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER):
+            raise ValueError('invalid inf mode')
+
+        if isinstance(os_files, str):
+            os_files = [os_files]
+
+        if dfs_names is not None:
+            if isinstance(dfs_names, str):
+                dfs_names = [dfs_names]
+            if len(dfs_names) != len(os_files):
+                raise ValueError("size of dfs_names parameter doesn't match "
+                                 "number of files to import")
+
+        self.image = image
+        self.os_files: List[str] = os_files
+        self.dfs_names: Optional[List[str]] = dfs_names
+        self.inf_mode: int = inf_mode
+        self.load_addr = load_addr
+        self.exec_addr = exec_addr
+        self.locked = locked
+        self.replace = replace
+        self.ignore_access = ignore_access
+        self.no_compact = no_compact
+        self.continue_on_error = continue_on_error
+        self.verbose = verbose
+        self.default_head: Optional[int] = default_head
+        self.filelist: List[Dict] = []
+
+    def _scan_inf_files(self):
+        index = 0
+        inf_cache = InfCache()
+        fileset: Set[str] = set()
+        for file in self.os_files:
+            displayfile = file
+            host_file = None
+            inf = None
+            dfs_name = self.dfs_names[index] if self.dfs_names is not None else None
+            basename = os.path.basename(file)
+
+            if os.path.isdir(file):
+                warn(DFSWarning("skipping directory '%s'" % file))
+                index += 1
+                continue
+
+            # Inf file passed - get data file
+            if self.inf_mode != INF_MODE_NEVER and file.lower().endswith(".inf"):
+                inf = inf_cache.get_inf_by_inf_file(file)
+                if inf is not None:
+                    displayfile = displayfile[:-4]
+                    host_file = inf.inf_path[:-4]
+
+            # Data file passed - try to find inf file
+            if self.inf_mode != INF_MODE_NEVER and inf is None:
+                inf = inf_cache.get_inf_by_host_file(file)
+                if inf is not None:
+                    host_file = inf.inf_path[:-4]
+
+            # Inf file not found
+            if host_file is None:
+                host_file = canonpath(file)
+                if self.inf_mode == INF_MODE_ALWAYS:
+                    raise ValueError("missing inf file for %s" % host_file)
+
+            # Add file if not already encountered
+            if host_file not in fileset:
+                fileset.add(host_file)
+                filedict = {'displayfile': displayfile, 'hostfile': host_file, 'basename': basename,
+                            'dfs_name': dfs_name, 'inf': inf}
+                self.filelist.append(filedict)
+
+            index += 1
+
+    def _import_file(self, displayname: str, hostfile: str, basename: str,
+                     dfs_name: str, inf: Optional[Inf]):
+        load_addr = self.load_addr
+        exec_addr = self.exec_addr
+        locked = self.locked
+
+        # Update with attributes from inf file if present
+        if inf is not None:
+            if load_addr is None:
+                load_addr = inf.load_addr
+            if exec_addr is None:
+                exec_addr = inf.exec_addr
+            if locked is None:
+                locked = inf.locked
+            if dfs_name is None:
+                dfs_name = inf.filename
+
+        # Exec addr defaults to load addr
+        if exec_addr is None:
+            exec_addr = load_addr
+
+        # If dfs name is not given, use host file name
+        if dfs_name is None:
+            dfs_name = basename
+
+        # Read file data
+        with open(hostfile, "rb") as file:
+            data = file.read()
+
+        # Add file to disk image
+        entry = self.image.add_file(dfs_name, data, load_addr, exec_addr,
+                                    locked=locked, replace=self.replace,
+                                    ignore_access=self.ignore_access,
+                                    no_compact=self.no_compact,
+                                    default_head=self.default_head)
+
+        if self.verbose:
+            new_inf = entry.get_inf()
+            if inf is not None:
+                src_name = "%s, %s" % (displayname, os.path.basename(inf.inf_path))
+            else:
+                src_name = displayname
+            print("%-40s <- %s" % (str(new_inf), src_name))
+
+    def run(self) -> int:
+        """Run import process"""
+        count = 0
+        self._scan_inf_files()
+        for filedict in self.filelist:
+            try:
+                self._import_file(**filedict)
+                count += 1
+
+            except (FileExistsError, PermissionError, OSError) as err:
+                if not self.continue_on_error:
+                    raise
+                warn(DFSWarning(str(err)))
+
+            except (RuntimeError) as err:
+                if not self.continue_on_error:
+                    raise
+                warn(DFSWarning(str(err)))
+                break
+
+        if count != len(self.filelist):
+            warn(DFSWarning("%s: %d files not imported"
+                            % (self.image.filename, len(self.filelist) - count)))
+
+        return count
+
+
+class _ExportFiles:
+
+    def __init__(self, image: Image, output: str,
+                 files: Optional[Union[str, List[str]]],
+                 create_directories: bool,
+                 translation: Optional[Union[int, bytes]],
+                 inf_mode: Optional[int], include_drive: bool,
+                 replace: bool, continue_on_error: bool,
+                 verbose: bool, default_head: Optional[int]):
+        image._not_closed()
+
+        if translation is None:
+            translation = TRANSLATION_STANDARD
+
+        if inf_mode is None:
+            inf_mode = INF_MODE_ALWAYS
+
+        if inf_mode not in (INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER):
+            raise ValueError('invalid inf mode')
+
+        # Get and validate characters translation table
+        if not isinstance(translation, bytes):
+            if translation == TRANSLATION_STANDARD:
+                translation = NAME_STD_TRANS
+            elif translation == TRANSLATION_SAFE:
+                translation = NAME_SAFE_TRANS
+            else:
+                raise ValueError("invalid translation mode")
+
+        if len(translation) != 256:
+            raise ValueError("translation table must be 256 bytes long")
+
+        # If output ends with directory name, append dfs full name
+        if output in ('', '.'):
+            output = './'
+
+        _, tail = os.path.split(output)
+        if tail == '' or os.path.exists(output) and os.path.isdir(output):
+            output = os.path.join(output, '{displayname}')
+
+        self.image = image
+        self.output = output
+        self.files = files
+        self.create_directories = create_directories
+        self.translation: bytes = translation
+        self.inf_mode: int = inf_mode
+        self.include_drive = include_drive
+        self.replace = replace
+        self.continue_on_error = continue_on_error
+        self.verbose = verbose
+        self.default_head = default_head
+        self.inf_cache = InfCache()
+        self.output_set: Set[str] = set()
+
+    def _inf_file_clash(self, path: str, inf: Inf, dfs_name: str,
+                        just_created: bool) -> bool:
+        """Returns True to overwrite, False to generate next available filename."""
+
+        # Inf path exists, check if it's the same dfs name
+        if inf.filename == dfs_name:
+
+            # Already exists for the same dfs name
+            if not self.replace and just_created:
+                raise FileExistsError("not overwriting file '%s', just created for ':%d.%s'"
+                                      % (path, inf.drive, inf.filename))
+
+            if not self.replace:
+                raise FileExistsError("file '%s' already exists for '%s'"
+                                      % (path, inf.filename))
+
+            if just_created:
+                warn(DFSWarning("overwriting file '%s', just created for ':%d.%s'"
+                                % (path, inf.drive, inf.filename)))
+
+            return True
+
+        # Different DFS name, don't overwrite
+        return False
+
+    def _data_file_clash(self, path: str, just_created: bool) -> bool:
+        """Returns True to overwrite, or raises exception if 'replace' is not on."""
+
+        # Data file exists.
+        if not self.replace and just_created:
+            raise FileExistsError("not overwriting just created file '%s'" % path)
+
+        if not self.replace:
+            raise FileExistsError("file '%s' already exists" % path)
+
+        if just_created:
+            warn(DFSWarning("overwriting just created file '%s'" % path))
+
+        return True
+
+    def _find_available(self, dirname: str, filename: str, dfs_name: str,
+                        inf_mode: int) -> Tuple[str, Optional[str]]:
+        """Find available host filename, append numbers if needed."""
+
+        done = False
+        index = 0
+        check_name: Optional[str] = filename
+        use_inf = inf_mode == INF_MODE_ALWAYS
+
+        while not done:
+            path = os.path.join(dirname, cast(str, check_name))
+            canon = canonpath(path)
+            just_created = canon in self.output_set
+            inf_path = None
+
+            if inf_mode != INF_MODE_NEVER:
+                inf: Optional[Inf] = self.inf_cache.get_inf_by_host_file(path)
+            else:
+                inf = None
+
+            if inf is not None:
+                # Inf file exists.
+                if self._inf_file_clash(path, inf, dfs_name, just_created):
+                    inf_path = inf.inf_path
+                    break
+                # Force using inf and generate next name
+                use_inf = True
+
+            elif os.path.exists(path):
+                # Data file exists.
+                self._data_file_clash(path, just_created)
+                break
+
+            else:
+                # Name free to use
+                break
+
+            # Generate next name
+            index += 1
+            check_name = "%s-%02d" % (filename, index)
+
+        if not use_inf:
+            return path, None
+
+        if inf_path is None:
+            inf_path = "%s.inf" % path
+
+        return path, inf_path
+
+    def _get_output_name(self, entry: Entry) -> str:
+        # Get file properties to build file name
+        props = entry.get_properties(True)
+        props["fullname"] = (entry.fullname_bytes.translate(self.translation)
+                             .lstrip().decode("ascii"))
+        props["filename"] = (entry.filename_bytes.translate(self.translation)
+                             .decode("ascii"))
+        props["directory"] = (entry.directory_bytes.translate(self.translation)
+                              .decode("ascii"))
+        props["displayname"] = (entry.displayname_bytes.translate(self.translation)
+                                .lstrip().decode("ascii"))
+        return self.output.format_map(props)
+
+    def _needs_inf(self, entry: Entry, output_name: str, dfs_name: str) -> bool:
+        if self.inf_mode != INF_MODE_AUTO:
+            return False
+        if os.path.basename(output_name) != dfs_name:
+            return True
+        if entry.load_address != 0 or entry.exec_address != 0 or entry.locked:
+            return True
+        return False
+
+    def _ensure_directory(self, dirname: str) -> bool:
+        # Check if directory exists
+        if dirname != '' and not os.path.exists(dirname):
+            if not self.create_directories:
+                if not self.continue_on_error:
+                    raise FileNotFoundError("output directory '%s' doesn't exist" % dirname)
+
+                warn(DFSWarning("output directory '%s' doesn't exist" % dirname))
+                return False
+
+            os.makedirs(dirname)
+            print("created directory '%s'" % dirname)
+
+        return True
+
+    def _export_entry(self, entry: Entry) -> bool:
+
+        output_name = self._get_output_name(entry)
+
+        # Name to put in inf
+        if len(self.image.sides) != 1 and self.include_drive:
+            dfs_name = ":%d.%s" % (entry.drive, entry.fullname_ascii.lstrip())
+        else:
+            dfs_name = entry.fullname_ascii.lstrip()
+
+        # Enable inf for auto mode if required
+        inf_mode = self.inf_mode
+        if self._needs_inf(entry, output_name, dfs_name):
+            inf_mode = INF_MODE_ALWAYS
+
+        # Check if file exists
+        dirname, filename, = os.path.split(output_name)
+        try:
+            data_name, inf_name = self._find_available(dirname, filename,
+                                                       dfs_name, inf_mode)
+        except FileExistsError as err:
+            if not self.continue_on_error:
+                raise
+            warn(DFSWarning(str(err)))
+            return False
+
+        data = entry.readall()
+        inf = entry.get_inf()
+        inf.filename = dfs_name
+
+        if not self._ensure_directory(dirname):
+            return False
+
+        with open(data_name, "wb") as file:
+            file.write(data)
+
+        if inf_name is not None:
+            inf.inf_path = canonpath(inf_name)
+            inf.save()
+            # Twice (!) to update canonical path form
+            inf.inf_path = canonpath(inf_name)
+            self.inf_cache.update(inf.inf_path, inf)
+
+        if self.verbose:
+            if inf_name is not None:
+                v_name = "%s, %s" % (data_name, os.path.basename(inf_name))
+            else:
+                v_name = data_name
+            print("%-40s -> %s" % (str(inf), v_name))
+
+        self.output_set.add(canonpath(data_name))
+
+        return True
+
+    def run(self) -> int:
+        """Run export process"""
+        entries = self.image.get_files(self.files, self.default_head)
+        count = 0
+        skipped = 0
+        for entry in entries:
+            if self._export_entry(entry):
+                count += 1
+            else:
+                skipped += 1
+
+        if skipped != 0:
+            warn(DFSWarning("%s: %d files not exported"
+                            % (self.image.filename, skipped)))
+
+        return count
