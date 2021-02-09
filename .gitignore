@@ -1,0 +1,10 @@
+.vscode
+.flake8
+__pycache__
+*.ssd
+*.dsd
+*.img
+*.bin
+img
+builtins.pyi
+out
