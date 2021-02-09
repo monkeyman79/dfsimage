@@ -4,8 +4,7 @@ dfsimage
 
 **BBC Micro Acorn DFS floppy disk image maintenance utility**
 
-:Author: Tadeusz Kijkowski
-:Version: 0.9
+:Author: Tadek Kijkowski
 
 This package is a command-line utility and a Python module dedicated for
 maintenance of BBC Micro disk image files. Those files usually have extensions
