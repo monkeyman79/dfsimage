@@ -12,9 +12,11 @@ from itertools import islice
 from .conv import bbc_to_unicode
 from .misc import bchr
 
+
 class SectorsOwnerProtocol(Protocol):
     """Sectors owner protocol for static analyzer."""
     modified: bool
+
 
 class Sectors:
     """Non-continuous chain of blocks in floppy disk image."""

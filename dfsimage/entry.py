@@ -121,7 +121,6 @@ class Entry:
         self.side.modified = True
         self.entry1[0:7] = value
 
-
     def __get_filename(self, pure_ascii: bool = False) -> str:
         value = self.filename_bytes.decode("ascii")
         if pure_ascii:
@@ -530,7 +529,7 @@ class Entry:
         "directory": "File directory name.",
         "filename": "File name not including directory name.",
         "fullname_ascii": "Full file name without translation of ASCII code 0x60 "
-                           "to unicode Pound sign.",
+                          "to unicode Pound sign.",
         "displayname": "File name as displayed by CAT",
         "locked": "File access mode - True if file is locked.",
         "dir_str": "Directory prefix as displayed by CAT command.",
@@ -600,7 +599,6 @@ class Entry:
         }
 
         return {**attrs, **redund_attrs}
-
 
     def listing_entry(self, fmt=None) -> str:
         """Generate catalog listing entry line according to selected format.

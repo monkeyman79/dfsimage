@@ -7,6 +7,7 @@ import os
 from .simplewarn import warn
 from .misc import InfWarning
 
+
 def foldfilecase(dirname: str, file: str) -> str:
     """Normalize the file name letter case the hard way for WSL."""
     path = os.path.join(dirname, file)
@@ -58,6 +59,7 @@ def foldcase(path: str) -> str:
         return path
     return head
 
+
 def canonpath(path: str) -> str:
     """Get canonical file path.
 
@@ -66,6 +68,7 @@ def canonpath(path: str) -> str:
     """
     path = os.path.normcase(os.path.realpath(path))
     return foldcase(path)
+
 
 class Inf:
     """Inf file contents."""
@@ -302,6 +305,7 @@ class Inf:
                 err.args = ('%s: %s' % (path, err.args[0]), )
             raise
 
+
 class InfDirectoryCache:
     """Cache all inf files in a single directory."""
 
@@ -313,7 +317,6 @@ class InfDirectoryCache:
         """
         self.inf_map: Dict[str, Inf] = {}
         self.host_file_map: Dict[str, Inf] = {}
-        #self.dfs_file_map: Dict[str, Inf] = {}
         self.dir_path = path
         if os.path.exists(path):
             self.scandir()
@@ -353,17 +356,6 @@ class InfDirectoryCache:
             if inf_name not in data_map:
                 # Map 'Inf' objects by inf file name
                 self.inf_map[inf_name] = inf
-                # Check for conflicting infs for the same DFS file
-                #dfs_name = cast(str,inf.filename)
-                #prev_inf = self.dfs_file_map.get(dfs_name)
-                #if prev_inf is not None:
-                #    prev_inf_name = os.path.basename(cast(str,prev_inf.inf_path))
-                #    warn(InfWarning("conflicting inf files for dfs file %s "
-                #                    "in directory %s: %s, %s" %
-                #                    (dfs_name, self.dir_path, inf_name,
-                #                     prev_inf_name)))
-                # Map 'Inf' objects by dfs file name
-                #self.dfs_file_map[dfs_name] = inf
         # Iterate over data files matched for infs
         for data_path, inf_name in data_map.items():
             # Ignore data file if inf has been 'cancelled'
@@ -390,8 +382,6 @@ class InfDirectoryCache:
         # Update all maps
         self.inf_map[inf_name] = inf
         self.host_file_map[inf_name[:-4]] = inf
-        #dfs_name = cast(str,inf.filename)
-        #self.dfs_file_map[dfs_name] = inf
 
     def get_by_host_file(self, host_file: str) -> Optional[Inf]:
         """Get Inf by host data file name.
@@ -413,15 +403,6 @@ class InfDirectoryCache:
         """
         return self.inf_map.get(inf_file)
 
-    #def get_by_dfs_file(self, dfs_name: str) -> Optional[Inf]:
-    #    """Get Inf by DFS file name.
-    #
-    #    Args:
-    #        dfs_name: Full DFS file name
-    #    Returns:
-    #        Inf object if valid matching inf file exists, 'None' otherwise.
-    #    """
-    #    return self.dfs_file_map.get(dfs_name)
 
 class InfCache:
     """Cache inf files in all visited directories."""
@@ -468,19 +449,6 @@ class InfCache:
         path = canonpath(inf_file)
         cache = self.get_directory_cache(os.path.dirname(path))
         return cache.get_by_inf_file(os.path.basename(path))
-
-    #def get_inf_by_dfs_file(self, dir_name: str, dfs_file: str) -> Optional[Inf]:
-    #    """Find Inf in host direcotry by dfs file name.
-    #
-    #    Args:
-    #        dir_name: Host directory - absolute or relative path.
-    #        dfs_file: DFS file name.
-    #    Returns:
-    #        Inf object if valid matching inf file exists, 'None' otherwise.
-    #    """
-    #    path = canonpath(dir_name)
-    #    cache = self.get_directory_cache(path)
-    #    return cache.get_by_dfs_file(dfs_file)
 
     def update(self, inf_name: str, inf: Inf = None):
         """Update cache with new inf file.

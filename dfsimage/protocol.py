@@ -12,11 +12,14 @@ from .sectors import Sectors
 C_co = TypeVar('C_co', covariant=True)  # pylint: disable = invalid-name
 T = TypeVar('T')  # pylint: disable = invalid-name
 
+
 class Property(Protocol[C_co, T]):
     fget: Callable[[C_co], T]
 
+
 class EntryProtocol(Protocol):
     pass
+
 
 class ImageProtocol(Protocol):
     path: str
@@ -33,13 +36,19 @@ class ImageProtocol(Protocol):
 
     def parse_name(self, name: str,
                    is_pattern: bool) -> Tuple[str, Optional[str], Optional[int]]: ...
+
     def to_fullname(self, filename: str,
                     head: int = None) -> Tuple[str, Optional[int]]: ...
+
     def _sector(self, head: int, track: int, sector: int) -> memoryview: ...
+
     def _logical_sector(self, head: int, sector: int) -> memoryview: ...
+
     def _track(self, head: int, track: int) -> memoryview: ...
+
     def get_sectors(self, head: int, start_track: int, start_sector: int,
                     end_track: int, end_sector: int, used_size: int = None) -> Sectors: ...
+
     def get_logical_sectors(self, head: int, start_logical_sector: int,
                             end_logical_sector: int, used_size: int = None) -> Sectors: ...
 
@@ -50,19 +59,25 @@ class ImageProtocol(Protocol):
 
     def delete(self, filename: str, ignore_access=False, silent=False,
                default_head: int = None) -> bool: ...
+
     def rename(self, from_name: str, to_name: str, replace=False,
                ignore_access=False, no_compact=False,
                default_head: int = None) -> bool: ...
+
     def copy(self, from_name: str, to_name: str, replace=False,
              ignore_access=False, no_compact=False,
              preserve_attr=False,
              default_head: int = None) -> bool: ...
+
     def destroy(self, pattern: Union[str, List[str]], ignore_access=False,
                 default_head: int = None) -> int: ...
+
     def lock(self, pattern: Union[str, List[str]],
              default_head: int = None) -> int: ...
+
     def unlock(self, pattern: Union[str, List[str]],
                default_head: int = None) -> int: ...
+
     def import_files(self, hostfiles: Union[str, List[str]],
                      dfs_names: Union[str, List[str]] = None,
                      inf_mode: int = None,
@@ -72,6 +87,7 @@ class ImageProtocol(Protocol):
                      no_compact=False, continue_on_error=False,
                      verbose=False,
                      default_head: int = None) -> int: ...
+
     def export_files(self, output: str,
                      files: Union[str, List[str]] = None,
                      create_directories=False,
@@ -80,7 +96,9 @@ class ImageProtocol(Protocol):
                      replace=False, continue_on_error=False,
                      verbose=False,
                      default_head: int = None) -> int: ...
+
     def backup(self, source, default_head: int = None): ...
+
     def copy_over(self, source, pattern: Union[str, List[str]],
                   replace=False, ignore_access=False, no_compact=False,
                   change_dir=False, preserve_attr=False,
@@ -99,29 +117,43 @@ class SideProtocol(Protocol):
 
     @property
     def sha1(self) -> str: ...
+
     @property
     def sha1files(self) -> str: ...
+
     @property
     def sha1used(self) -> str: ...
 
     @property
     def free_sectors(self) -> int: ...
+
     @property
     def used_sectors(self) -> int: ...
+
     @property
     def largest_free_block(self) -> int: ...
+
     @property
     def last_used_sector(self) -> int: ...
 
     def to_fullname(self, name: str) -> str: ...
+
     def _sector(self, track: int, sector: int) -> memoryview: ...
+
     def _logical_sector(self, sector: int) -> memoryview: ...
+
     def _track(self, track: int) -> memoryview: ...
+
     def get_sectors(self, start_track: int, start_sector: int,
                     end_track: int, end_sector: int, used_size: int = None) -> Sectors: ...
+
     def get_logical_sectors(self, start_logical_sector: int,
                             end_logical_sector: int, used_size: int = None) -> Sectors: ...
+
     def get_all_sectors(self) -> Sectors: ...
+
     def check_sectors_allocation(self, warnall: bool = False) -> bool: ...
+
     def check_valid(self) -> None: ...
+
     def get_entry(self, index: Union[int, str]): ...

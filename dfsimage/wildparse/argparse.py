@@ -5,6 +5,7 @@
 # parameters.
 # https://github.com/monkeyman79/cpython/commit/983fe166ce6302a34694a8f4721d354bcf0d7a7a
 # pylint: skip-file
+# flake8: noqa
 # spell-checker: disable
 
 """Command-line parsing library

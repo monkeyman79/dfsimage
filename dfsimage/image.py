@@ -36,6 +36,7 @@ from .entry import Entry
 from .side import Side
 from .inf import Inf, InfCache, canonpath
 
+
 class Image:
     """DFS floppy disk image loaded (or mapped) into memory."""
 
@@ -165,8 +166,7 @@ class Image:
 
     @property
     def default_sides(self) -> Tuple:
-        "Get tuple object containing default side "\
-        "or all sides if default side is None."
+        """Get tuple object containing default side or all sides if default side is None."""
         head = self._default_head
         if head is None:
             return tuple(self.sides)
@@ -957,7 +957,6 @@ class Image:
                 for file in side.files
                 if file.match_parsed(parsed, default_head)]
 
-
     def delete(self, filename: str, ignore_access=False, silent=False,
                default_head: int = None) -> bool:
         """Delete single file from floppy disk image.
@@ -1252,7 +1251,6 @@ class Image:
         start_sector, index = side.find_free_block(size)
         if index is None or start_sector is None:
             raise RuntimeError("no continuous free block for file")
-        #print("free block: %d %d" % (index, start_sector))
         if load_addr is None:
             load_addr = 0
         if exec_addr is None:
@@ -1710,12 +1708,10 @@ class Image:
                 warn(DFSWarning(str(err)))
                 break
 
-
         if len(files) != count:
             warn(DFSWarning("%s: %d files not copied"
                             % (self.filename, len(files) - count)))
         return count
-
 
     @staticmethod
     def _find_available(dirname: str, filename: str, dfs_name: str,
@@ -1911,7 +1907,7 @@ class Image:
 
             new_image.file = open(fname, "xb")
             new_image.is_new_image = True
-        except:
+        except:  # noqa: E722
             new_image.close()
             raise
 
@@ -2031,7 +2027,7 @@ class Image:
                 # Sanity check. Validate the image first to now how to calculate min_size
                 if fsize < new_image.min_size:
                     raise RuntimeError("disk image too small")
-            except:
+            except:  # noqa: E722
                 new_image.close(False)
                 raise
 

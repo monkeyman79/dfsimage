@@ -12,7 +12,7 @@ disable=locally-disabled,suppressed-message,file-ignored,useless-suppression
 include-naming-hint=yes
 
 [SIMILARITIES]
-min-similarity-lines=4
+min-similarity-lines=8
 
 [DESIGN]
 

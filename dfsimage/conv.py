@@ -37,7 +37,9 @@ def to_bcd(val: int) -> int:
     """
     return val % 10 + ((val // 10) << 4)
 
+
 UNDERSCORE = ord('_')
+
 
 def name_translate_safe(code):
     """Safe filename translation generator
@@ -49,6 +51,7 @@ def name_translate_safe(code):
             or ord('a') <= code <= ord('z')):
         return code
     return UNDERSCORE
+
 
 def name_translate_standard(code):
     """Standard filename translation generator
@@ -64,5 +67,7 @@ def name_translate_standard(code):
         return UNDERSCORE
     return code
 
+
 NAME_SAFE_TRANS = bytes(name_translate_safe(x) for x in range(0, 256))
+
 NAME_STD_TRANS = bytes(name_translate_standard(x) for x in range(0, 256))

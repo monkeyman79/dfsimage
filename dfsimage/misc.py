@@ -6,6 +6,7 @@ import hashlib
 
 from typing import Sequence, Optional, Union, TypeVar, List
 
+
 class DFSWarning(UserWarning):
     """DFS operation warning."""
 
@@ -20,6 +21,7 @@ class InfWarning(UserWarning):
 
 # pylint: disable=invalid-name
 bchr = tuple([bytes((x, )) for x in range(0, 256)]).__getitem__
+
 
 def rjoin(sep: Optional[str], array: Sequence[str]) -> Union[str, List[str]]:
     """Concatenate string with additional separator at the end.
@@ -70,9 +72,11 @@ def get_digest(data, algorithm: str = None) -> str:
     return hashlib.new(algorithm, data,
                        usedforsecurity=False).hexdigest()  # type: ignore[call-arg]
 
+
 def json_dumps(obj: object) -> str:
     """Call json.dumps with correct indent."""
     return json.dumps(obj, indent=2)
+
 
 def xml_dumps(obj: object, root_name: str) -> str:
     """Make sure that xml modules are loaded and create xml from dictionary or list."""

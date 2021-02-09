@@ -27,7 +27,7 @@ VERSION = __version__
 __all__ = ['Image', 'Side', 'Entry', 'Inf', 'Sectors', 'cli',
            'ValidationWarning', 'InfWarning', 'DFSWarning',
            'LIST_FORMAT_RAW', 'LIST_FORMAT_INFO', 'LIST_FORMAT_INF', 'LIST_FORMAT_CAT',
-           'LIST_FORMAT_JSON', 'LIST_FORMAT_XML',
+           'LIST_FORMAT_JSON', 'LIST_FORMAT_XML', 'LIST_FORMAT_TABLE',
            'DIGEST_MODE_ALL', 'DIGEST_MODE_USED', 'DIGEST_MODE_FILE', 'DIGEST_MODE_DATA',
            'SIZE_OPTION_KEEP', 'SIZE_OPTION_EXPAND', 'SIZE_OPTION_SHRINK',
            'WARN_FIRST', 'WARN_NONE', 'WARN_ALL',

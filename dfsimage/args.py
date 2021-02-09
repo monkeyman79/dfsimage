@@ -1,17 +1,16 @@
 """This module contains argparse customizations"""
 
 # pylint: skip-file
+# flake8: noqa: C901
 
 from typing import Optional, Any
-from gettext import gettext as _, ngettext
+from gettext import gettext as _
 
 import re as _re
-import sys
-import os
 
 from .wildparse import argparse
 from .wildparse.argparse import HelpFormatter, CustomizableHelpFormatter
-from .wildparse.argparse import SUPPRESS, CustomHelpFormat
+from .wildparse.argparse import SUPPRESS
 
 _SubParsersAction: Optional[Any] = None
 

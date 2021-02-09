@@ -313,14 +313,10 @@ class Side:
         """
         sectors = (min_size + SECTOR_SIZE - 1) // SECTOR_SIZE
         start = CATALOG_SECTORS
-        #print("last entry offset %d" % self.last_entry_offset)
-        #print("number of files %d" % self.number_of_files)
         index = self.number_of_files - 1
         while index >= 0:
             file = self.get_entry(index)
             gap = file.start_sector - start
-            #print("file #%d start %d end %d gap %d" %
-            #      (index, file.start_sector, file.end_sector, gap))
             if gap < 0:
                 raise RuntimeError("bad file order in disk catalog")
             if gap >= sectors:
@@ -330,8 +326,6 @@ class Side:
         gap = self.number_of_sectors - start
         if gap < 0:
             raise RuntimeError("bad file order in disk catalog")
-        #print("end start %d end %d gap %d" %
-        #        (start, self.number_of_sectors, gap))
         if gap >= sectors:
             return start, 0
         return None, None
@@ -693,12 +687,10 @@ class Side:
                 'sectors': self.number_of_sectors,
                 'free_sectors': self.free_sectors,
                 'max_free_blk_sectors': self.largest_free_block // SECTOR_SIZE,
-                # pylint: disable=no-member
                 'sha1': LazyString(cast(Property['Side', str], Side.sha1).fget, self),
                 'sha1_files': LazyString(cast(Property['Side', str], Side.sha1files).fget, self),
                 'sha1_used': LazyString(cast(Property['Side', str], Side.sha1used).fget, self)
                 }
-                # pylint: enable=no-member
 
         if level == 0:
             attrs['image_path'] = self.image.path

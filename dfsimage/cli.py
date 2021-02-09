@@ -8,9 +8,9 @@ import codecs
 from typing import Dict, Optional, List, cast
 
 from .wildparse import argparse
-from .wildparse.argparse import SUPPRESS
+from .wildparse.argparse import SUPPRESS, CustomHelpFormat
 
-from .args import CustomHelpFormat, MyHelpFormatter
+from .args import MyHelpFormatter
 
 from .consts import LIST_FORMAT_INF, LIST_FORMAT_CAT, LIST_FORMAT_INFO, LIST_FORMAT_RAW
 from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
@@ -32,7 +32,7 @@ from .image import Image
 DESCRIPTION = """BBC Micro Acorn DFS floppy disk image maintenance utility."""
 
 IMAGE_OPTIONS_HELP = """
-Image file options apply to the first following disk image file. 
+Image file options apply to the first following disk image file.
 Those options must be specified before the corresponding image file name.
 """
 
@@ -180,6 +180,7 @@ Disk Filing System each time the disk catalog is modified.
 subcommands: Dict[str, argparse.ArgumentParser] = {}
 options_template: List[argparse.ArgumentParser] = []
 
+
 class _StoreConstOnceAction(argparse._StoreConstAction):  # pylint: disable=protected-access
 
     def __call__(self, parser, namespace, values, option_string=None):
@@ -188,6 +189,7 @@ class _StoreConstOnceAction(argparse._StoreConstAction):  # pylint: disable=prot
             parser.error("excessive argument %s" % argparse._get_action_name(self))
         setattr(namespace, self.dest, self.const)
 
+
 class _StoreOnceAction(argparse._StoreAction):  # pylint: disable=protected-access
 
     def __call__(self, parser, namespace, values, option_string=None):
@@ -195,6 +197,7 @@ class _StoreOnceAction(argparse._StoreAction):  # pylint: disable=protected-acce
         if oldval is not None:
             parser.error("excessive argument %s" % argparse._get_action_name(self))
         setattr(namespace, self.dest, values)
+
 
 class _MyHelpAction(argparse.Action):
     def __init__(self, option_strings, metavar=None, dest=SUPPRESS,
@@ -247,9 +250,46 @@ class _AddImageAction(argparse.Action):
             choices=choices, required=required, help=help,
             metavar=metavar)
 
+    def get_dest(self, parser, namespace):
+        images = None
+        selected = None
+
+        if hasattr(namespace, "selected"):
+            selected = getattr(namespace, "selected")
+            namespace.selected = None
+            if selected is None:
+                parser.error("--to or --from is missing before image name")
+
+            elif selected == "from":
+                if namespace.from_image is not None:
+                    parser.error("exactly one source image is required")
+                if namespace.open_mode is not None and namespace.open_mode != OPEN_MODE_EXISTING:
+                    parser.error("arguments --new and --always are invalid "
+                                 "for source image")
+                images = []
+                namespace.from_image = images
+
+            elif selected == "to":
+                if namespace.images is not None:
+                    parser.error("exactly one destination image is required")
+                images = []
+                namespace.images = images
+
+        else:
+            images = namespace.images
+            if images is None:
+                images = []
+                namespace.images = images
+
+        return images
+
     def __call__(self, parser, namespace, values, option_string=None):
         if len(values) == 0:
             return
+
+        images = self.get_dest(parser, namespace)
+        if images is values:
+            raise RuntimeError("adding value to itself")
 
         tracks = namespace.tracks
         sides = namespace.sides
@@ -257,34 +297,6 @@ class _AddImageAction(argparse.Action):
         linear = namespace.linear
         open_mode = namespace.open_mode
         directory = namespace.directory
-
-        selected = None
-        if hasattr(namespace, "selected"):
-            selected = getattr(namespace, "selected")
-            if selected is None:
-                parser.error("--to or --from is missing before image name")
-            elif selected == "from":
-                if namespace.from_image is not None:
-                    parser.error("exactly one source image is required")
-                if open_mode is not None and open_mode != OPEN_MODE_EXISTING:
-                    parser.error("arguments --new and --always are invalid "
-                                 "for source image")
-                images = []
-                namespace.from_image = images
-            elif selected == "to":
-                if namespace.images is not None:
-                    parser.error("exactly one destination image is required")
-                images = []
-                namespace.images = images
-            namespace.selected = None
-        else:
-            images = namespace.images
-            if images is values:
-                raise RuntimeError("adding value to itself")
-
-        if images is None:
-            images = []
-            namespace.images = images
 
         for name in values:
             images.append({'name': name, 'tracks': tracks,
@@ -304,6 +316,7 @@ class _AddImageAction(argparse.Action):
         namespace.linear = None
         namespace.directory = None
         namespace.open_mode = None
+
 
 class _AddImportAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
@@ -351,11 +364,12 @@ def _open_from_params(params, for_write, warn_mode, existing=False):
     try:
         image.default_side = params["side"]
         image.current_dir = params["directory"]
-    except:
+    except:  # noqa: E722
         image.close()
         raise
 
     return image
+
 
 def _conv_format(fmt):
     if not isinstance(fmt, str):
@@ -376,6 +390,7 @@ def _conv_format(fmt):
     elif fmt2 == 'table':
         fmt = LIST_FORMAT_TABLE
     return fmt
+
 
 class _Process:
     def __init__(self, namespace):
@@ -489,8 +504,10 @@ class _ListProcess(_Process):
         if self.fmt == LIST_FORMAT_XML:
             print(xml_dumps(self.tree, self.root_node))
 
+
 def _list_command(namespace, _parser):
     _ListProcess(namespace).run_listing()
+
 
 class _DumpProcess(_Process):
 
@@ -568,7 +585,7 @@ class _DumpProcess(_Process):
                     else:
                         side: Side = image.default_sides[0]
                         digest = side.get_digest(mode=self.mode,
-                                                algorithm=self.algorithm)
+                                                 algorithm=self.algorithm)
                         if image.heads != 1:
                             self.show_digest(image, ":%d." % side.drive, None, digest)
                         else:
@@ -597,7 +614,6 @@ class _DumpProcess(_Process):
                         self.show_digest(image, name, side.drive,
                                          get_digest(data, self.algorithm))
 
-
             if self.tracks is not None and len(self.tracks) != 0:
                 if image.default_side is None:
                     RuntimeError("select disk side")
@@ -620,6 +636,7 @@ class _DumpProcess(_Process):
                         self.show_digest(image, name, side.drive,
                                          get_digest(data, self.algorithm))
 
+
 def _dump_command(namespace, parser):
     if namespace.files is not None and len(namespace.files) > 0:
         if namespace.track is not None:
@@ -634,6 +651,7 @@ def _dump_command(namespace, parser):
         parser.error("missing argument FILE")
     _DumpProcess(namespace).run()
 
+
 def _digest_command(namespace, parser):
     if namespace.files is not None and len(namespace.files) > 0:
         if namespace.track is not None:
@@ -647,6 +665,7 @@ def _digest_command(namespace, parser):
             and not namespace.all):
         parser.error("missing argument FILE")
     _DumpProcess(namespace, True).run()
+
 
 class _ModifyProcess(_Process):
     def __init__(self, namespace):
@@ -843,7 +862,6 @@ class _ModifyProcess(_Process):
                         entry.locked = fileset["locked"]
             print("%s: %d files changed" % (image.filename, count))
 
-
         if self.command == "rename":
             if image.rename(from_name=self.oldname, to_name=self.newname,
                             replace=self.replace, ignore_access=self.ignore_access,
@@ -897,14 +915,17 @@ class _ModifyProcess(_Process):
                                    existing=self.existing) as image:
                 self.run_image(image, params)
 
+
 def _create_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.run()
+
 
 def _format_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.format_command = True
     proc.run()
+
 
 def _import_command(namespace, parser):
     if namespace.files is None:
@@ -913,11 +934,13 @@ def _import_command(namespace, parser):
     proc.command = "import"
     proc.run()
 
+
 def _delete_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
     proc.command = "delete"
     proc.run()
+
 
 def _lock_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
@@ -925,11 +948,13 @@ def _lock_command(namespace, _parser):
     proc.command = "lock"
     proc.run()
 
+
 def _unlock_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
     proc.command = "unlock"
     proc.run()
+
 
 def _destroy_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
@@ -937,11 +962,13 @@ def _destroy_command(namespace, _parser):
     proc.command = "destroy"
     proc.run()
 
+
 def _copy_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
     proc.command = "copy"
     proc.run()
+
 
 def _rename_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
@@ -949,15 +976,18 @@ def _rename_command(namespace, _parser):
     proc.command = "rename"
     proc.run()
 
+
 def _backup_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.command = "backup"
     proc.run()
 
+
 def _copyover_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.command = "copyover"
     proc.run()
+
 
 def _attrib_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
@@ -981,6 +1011,7 @@ def _build_command(namespace, parser):
     proc = _ModifyProcess(namespace)
     proc.command = "build"
     proc.run()
+
 
 class _ExportProcess(_Process):
 
@@ -1031,8 +1062,10 @@ class _ExportProcess(_Process):
                     raise
                 warn(err)
 
+
 def _export_command(namespace, _parser):
     _ExportProcess(namespace).run()
+
 
 WARN_HELP = "Validation warnings display mode. (default: first)"
 
@@ -1042,11 +1075,11 @@ WARN_LONG_HELP = WARN_HELP + """
  * all - Display all validation warning. Some warnings may be redundant.
 """
 
+
 def _add_global_options(parser, subparser=True, template=False):
     # pylint: disable=protected-access
     try:
         parser._optionals.title = "options"
-        #if not subparser:
         parser._optionals.group_usage = False
     except AttributeError:
         pass
@@ -1055,7 +1088,6 @@ def _add_global_options(parser, subparser=True, template=False):
         global_options = parser.add_argument_group("global options")
         add = global_options.add_argument
         add('-h', '--help', action='help', help=SUPPRESS)
-                        #help='Show this help message and exit.')
 
     if subparser:
         warn_group = global_options.add_mutually_exclusive_group()
@@ -1065,16 +1097,19 @@ def _add_global_options(parser, subparser=True, template=False):
             help=WARN_LONG_HELP if template else WARN_HELP,
             dest='warn_mode')
 
-PATTERN_HELP="File name or pattern for listing."
-PATTERN_LONG_HELP="""
+
+PATTERN_HELP = "File name or pattern for listing."
+
+PATTERN_LONG_HELP = """
 File name or pattern. The `fnmatch` function is used for pattern matching:
 * pattern `*` matches any string,
 * pattern `?` matches any single character,
 * pattern `[seq]` matches any character in `seq`,
 * pattern `[!seq]` matches any character not in `seq`.
 If directory-matching part (e.g. `?.`) is not present in the pattern,
-only files in the default directory are matched. 
+only files in the default directory are matched.
 """
+
 
 def _add_list_options(parser, index, template=False, group=None):
     if group is None:
@@ -1117,6 +1152,7 @@ def _add_list_options(parser, index, template=False, group=None):
         "useful mainly for JSON, XML and table format")
     return list_options
 
+
 def _add_modify_options(parser, command):
     modify_options = parser.add_argument_group('image modify options')
     modify_options.group_usage = True
@@ -1151,10 +1187,10 @@ def _add_modify_options(parser, command):
         help=SHRINK_LONG_HELP if command == "template" else SHRINK_HELP)
     add('--expand', action='store_true', help="Expand disk image file to maximum size.")
 
+
 def _add_image_options(parser, existing, nargs, template=False):
 
     image_options = parser.add_argument_group('image file options', IMAGE_OPTIONS_HELP)
-    #image_options.group_usage = True
 
     add = image_options.add_argument
     if not existing:
@@ -1212,12 +1248,16 @@ def _add_image_options(parser, existing, nargs, template=False):
         add('images', metavar='IMAGE', nargs=nargs, help='Floppy disk image file.',
             action=_AddImageAction)
 
+
 def hexint(string):
     """Convert argument to hex."""
     return int(string, 16)
 
+
 BUILD_FILE_OPTIONS_HELP = "File options apply to the first following file name."
+
 ATTRIB_FILE_OPTIONS_HELP = "File options apply to the first following group of file names."
+
 
 def _add_import_file_options(parser, command):
     if command == "build":
@@ -1245,10 +1285,11 @@ def _add_import_file_options(parser, command):
         import_file_options.set_defaults(dfs_name=None)
 
     if command != "template":
-        help="Files to import." if command == "import" else "Files."
+        help = "Files to import." if command == "import" else "Files."
         add = parser.add_argument
         add('files', metavar='FILE', nargs='**', help=help,
             action=_AddImportAction)
+
 
 def _add_command_options(parser, command, opts=None):
     if opts is None:
@@ -1301,6 +1342,7 @@ def _add_command_options(parser, command, opts=None):
         add('--continue', dest='cont', help='Continue on non-fatal errors.',
             action=argparse.BooleanOptionalAction, default=True)  # pylint: disable=no-member
 
+
 def _add_dump_options(parser, command, group=None):
     if group is None:
         group = parser.add_argument_group("%s options" % command)
@@ -1343,6 +1385,7 @@ def _add_dump_options(parser, command, group=None):
     group.add_argument("--all", help="Process entire disk or disk side.",
                        action='store_true')
 
+
 def _add_subcommand(subparsers, prog, command, help, format, no_prog=False,
                     no_global=False, **kwargs):
     if not no_prog:
@@ -1357,6 +1400,7 @@ def _add_subcommand(subparsers, prog, command, help, format, no_prog=False,
         _add_global_options(cmd)
     return cmd
 
+
 def _add_2images_arg(group, _command):
     add = group.add_argument
     add("--from", action=_StoreConstOnceAction, const='from', dest="selected",
@@ -1369,13 +1413,16 @@ def _add_2images_arg(group, _command):
         action=_AddImageAction, nargs=1)
     group.set_defaults(selected=None)
 
+
 def _add_files_arg(parser, command):
     parser.add_argument('files', metavar='FILES', help=('Files to %s.' % command),
                         nargs='+', action='store')
 
+
 def _add_2file_arg(parser, _command):
     parser.add_argument('oldname', metavar='FROM', help='Old name.')
     parser.add_argument('newname', metavar='TO', help='New name.')
+
 
 def _print_format_help():
     print("File properties can be used as keyword arguments in formatting string passed as "
@@ -1395,6 +1442,7 @@ def _print_format_help():
     print("Image file properties are:")
     for keyword, descr in Image.PROPERTY_NAMES.items():
         print("* %-20s - %s" % (keyword, descr))
+
 
 GLOBAL_USAGE = '%(prog)s COMMAND ...\n-h [COMMAND]'
 
@@ -1469,8 +1517,8 @@ BUILD_EPILOG = """examples:
 """
 
 COPYOVER_USAGE = ('%(prog)s [global options] [copy-over options] [image modify options] '
-                 '--from [image file options] FROM_IMAGE --to [image file options] TO_IMAGE '
-                 'FILES...')
+                  '--from [image file options] FROM_IMAGE --to [image file options] TO_IMAGE '
+                  'FILES...')
 COPYOVER_EPILOG = """examples:
   dfsimage copy-over --from image.ssd --to another.ssd '?.BLAG*'
 """
@@ -1480,7 +1528,7 @@ FORMAT_EPILOG = """examples:
 """
 
 DESTROY_USAGE = ('%(prog)s [global options] [destroy options] [image modify options] '
-                '[image file options] IMAGE FILES...')
+                 '[image file options] IMAGE FILES...')
 
 DESTROY_EPILOG = """examples:
   dfsimage destroy image.ssd --ignore-access 'A.*' '!BOOT'
@@ -1504,6 +1552,7 @@ DIGEST_EPILOG = """examples:
 
   dfsimage digest -nn --sector=0/0-0/1 image.ssd
 """
+
 
 def cli(prog=None):
     """Command line interface"""
@@ -1764,6 +1813,5 @@ def cli(prog=None):
             args.side is not None or args.linear is not None or
             args.directory is not None or args.open_mode is not None):
         parser.error("image file options must be specified before image file name")
-
 
     args.command(args, parser)

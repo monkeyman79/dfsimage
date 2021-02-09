@@ -11,11 +11,14 @@ from typing import Set, Type, IO, Callable
 muted: Set[Type] = set()
 stderr: IO = sys.stderr
 
+
 def formatmsg(message) -> str:
     """Format message."""
     return "%s: %s" % (type(message).__name__, str(message))
 
+
 current_format: Callable = formatmsg
+
 
 def warn(message):
     """Warnings just go out to stderr."""
@@ -24,9 +27,11 @@ def warn(message):
             return
     print(current_format(message), file=stderr)
 
+
 def mute(typ: Type):
     """Mute warning class."""
     muted.add(typ)
+
 
 def unmute(typ: Type):
     """Unmute warning class."""
