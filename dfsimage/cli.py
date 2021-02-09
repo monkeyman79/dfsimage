@@ -1334,6 +1334,8 @@ def _add_command_options(parser, command, opts=None):
     if command in ("import", "export", "copy-over", "command"):
         add('-v', '--verbose', action='store_true',
             help='Verbose mode - list copied files.')
+        add('--continue', dest='cont', help='Continue on non-fatal errors.',
+            action=argparse.BooleanOptionalAction, default=True)  # pylint: disable=no-member
 
     if command in ("export", "command"):
         add('--create-dir', action=argparse.BooleanOptionalAction,  # pylint: disable=no-member
@@ -1367,10 +1369,6 @@ def _add_command_options(parser, command, opts=None):
         default = (command == "copy-over")
         add('--preserve-attr', action=argparse.BooleanOptionalAction,  # pylint: disable=no-member
             help="Preserve 'locked' attribute on copying.", default=default)
-
-    if command in ("import", "export", "copy-over", "command"):
-        add('--continue', dest='cont', help='Continue on non-fatal errors.',
-            action=argparse.BooleanOptionalAction, default=True)  # pylint: disable=no-member
 
 
 def _add_dump_options(parser, command, group=None):

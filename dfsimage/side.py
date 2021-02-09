@@ -381,10 +381,54 @@ class Side:
         entry.size = size
         return entry
 
+    def _add_entry(self, fullname: str, data: bytes, load_addr: Optional[int],
+                   exec_addr: Optional[int], locked: bool,
+                   replace: bool, ignore_access: bool, no_compact: bool) -> Entry:
+        self.check_valid()
+        size = len(data)
+
+        entry = self.find_entry(fullname)
+        if entry is not None:
+            if not replace:
+                raise FileExistsError("file '%s' already exists" % entry.fullname)
+            entry.delete(ignore_access)
+            entry = None
+
+        if self.number_of_files == MAX_FILES:
+            raise RuntimeError("catalog full")
+        if size > self.free_sectors * SECTOR_SIZE:
+            raise RuntimeError("no space for file in floppy image")
+
+        if size > self.largest_free_block and not no_compact:
+            self.compact()
+        start_sector, index = self.find_free_block(size)
+        if index is None or start_sector is None:
+            raise RuntimeError("no continuous free block for file")
+        if load_addr is None:
+            load_addr = 0
+        if exec_addr is None:
+            exec_addr = load_addr
+        entry = self._insert_entry(index, fullname, start_sector, size)
+        entry.writeall(data)
+        entry.load_address = load_addr
+        entry.exec_address = exec_addr
+        entry.locked = locked
+        return entry
+
     def check_valid(self) -> None:
         """Check if catalog is valid before modifications."""
         if not self.isvalid:
             raise IOError("disk image is corrupted, can't be modified")
+
+    def can_add_file(self, size: int, no_compact: bool) -> bool:
+        """Check if side can accommodate new file of given size."""
+        if not self.isvalid or self.number_of_files == MAX_FILES:
+            return False
+        if self.largest_free_block >= size:
+            return True
+        if not no_compact and self.free_sectors * SECTOR_SIZE >= size:
+            return True
+        return False
 
     def to_fullname(self, filename: str) -> str:
         """Prepend current directory name ($) if not present in filename.

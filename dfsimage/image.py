@@ -14,7 +14,7 @@ from typing import cast, overload
 from . import simplewarn
 from .simplewarn import warn
 
-from .consts import SECTORS, SECTOR_SIZE, TRACK_SIZE, MAX_FILES
+from .consts import SECTORS, SECTOR_SIZE, TRACK_SIZE
 from .consts import SINGLE_TRACKS, DOUBLE_TRACKS, CATALOG_SECTORS
 from .consts import SIZE_OPTION_KEEP, SIZE_OPTION_EXPAND, SIZE_OPTION_SHRINK
 from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO
@@ -331,6 +331,24 @@ class Image:
         track_end = self.track_end(head, track)
         return self.dataview[track_start:track_end]
 
+    def _validate_sectors(self, head: int, start_track: int, start_sector: int,
+                          end_track: int, end_sector: int):
+        self._not_closed()
+        if head < 0 or head >= self.heads:
+            raise IndexError("invalid head number")
+        if start_track < 0 or start_track >= self.tracks:
+            raise IndexError("invalid track number")
+        if end_track < 0 or end_track > self.tracks:
+            raise IndexError("invalid track number")
+        if start_sector < 0 or start_sector >= SECTORS:
+            raise IndexError("invalid sector number")
+        if end_sector < 0 or end_sector > SECTORS or (end_track == self.tracks
+                                                      and end_sector != 0):
+            raise IndexError("invalid sector number")
+        if start_track > end_track or (start_track == end_track
+                                       and start_sector > end_sector):
+            raise ValueError("start sector after end sector")
+
     def get_sectors(self, head: int, start_track: int, start_sector: int,
                     end_track: int, end_sector: int,
                     used_size: int = None) -> Sectors:
@@ -356,22 +374,8 @@ class Image:
             IndexError: Invalid head, track or sector number
             ValueError: Start sector is after end sector.
         """
-        self._not_closed()
-        if head < 0 or head >= self.heads:
-            raise IndexError("invalid head number")
-        if start_track < 0 or start_track >= self.tracks:
-            raise IndexError("invalid track number")
-        if end_track < 0 or end_track > self.tracks:
-            raise IndexError("invalid track number")
-        if start_sector < 0 or start_sector >= SECTORS:
-            raise IndexError("invalid sector number")
-        if end_sector < 0 or end_sector > SECTORS or (end_track == self.tracks
-                                                      and end_sector != 0):
-            raise IndexError("invalid sector number")
-        if start_track > end_track or (start_track == end_track
-                                       and start_sector > end_sector):
-            raise ValueError("start sector after end sector")
-
+        self._validate_sectors(head, start_track, start_sector,
+                               end_track, end_sector)
         chunks = []
         count = 0
         if self.linear:
@@ -380,6 +384,7 @@ class Image:
             end = self.sector_start(head, end_track, end_sector)
             if start != end:
                 chunks.append(self.dataview[start:end])
+
         else:
             # Go though all tracks but last and append data chunks
             while start_track != end_track:
@@ -400,6 +405,7 @@ class Image:
                     chunks.append(dataview)
                 count += end_sector - start_sector
                 start_sector = end_sector
+
         return Sectors(self, chunks, count * SECTOR_SIZE, used_size)
 
     def get_logical_sectors(self, head: int, start_logical_sector: int,
@@ -815,6 +821,32 @@ class Image:
         """SHA1 digest of the entire disk image file."""
         return self.get_digest()
 
+    @staticmethod
+    def _skip_first_letter(pattern: str) -> int:
+        # If this is pattern and starts with '[', look for matching ']',
+        # skip ']' immediately following opening brace or '!'
+        if len(pattern) != 0 and pattern[0] == '[':
+            scan = 1 if len(pattern) <= 1 or pattern[1] != '!' else 2
+
+            if len(pattern) > scan and pattern[scan] == ']':
+                scan += 1
+
+            scan = pattern.find(']', scan)
+            if scan != -1:
+                return scan + 1
+
+        return 1
+
+    def _extract_drive(self, name: str) -> Tuple[str, int]:
+        if len(name) < 3 or name[2] != '.':
+            raise ValueError("invalid drive name")
+        if name[1] not in ('0', '2'):
+            raise ValueError("bad drive")
+        head = (ord(name[1]) - ord('0')) // 2
+        if head >= self.heads:
+            raise ValueError("bad drive")
+        return name[3:], head
+
     def parse_name(self, name: str,
                    is_pattern: bool) -> Tuple[str, Optional[str], Optional[int]]:
         """Extract drive and directory from pattern or filename.
@@ -841,32 +873,22 @@ class Image:
             done = True
             # If name begins with ':', extract drive
             if len(name) > 0 and name[0] == ':':
-                if len(name) < 3 or name[2] != '.':
-                    raise ValueError("invalid drive name")
-                if name[1] not in ('0', '2'):
-                    raise ValueError("bad drive")
-                head = (ord(name[1]) - ord('0')) // 2
-                if head >= self.heads:
-                    raise ValueError("bad drive")
-                name = name[3:]
+                name, head = self._extract_drive(name)
                 done = False
+
             # If name begins with '.', set directory to space
             elif len(name) > 0 and name[0] == '.':
                 dirname = ' '
                 name = name[1:]
                 done = False
+
             # Look for directory name
             else:
-                first_letter = 1
-                # If this is pattern and starts with '[', look for matching ']',
-                # skip ']' immediately following opening brace or '!'
-                if is_pattern and len(name) > 0 and name[0] == '[':
-                    scan = 1 if len(name) <= 1 or name[1] != '!' else 1
-                    if len(name) > scan and name[scan] == ']':
-                        scan += 1
-                    scan = name.find(']', scan)
-                    if scan != -1:
-                        first_letter = scan + 1
+                if is_pattern:
+                    first_letter = self._skip_first_letter(name)
+                else:
+                    first_letter = 1
+
                 if len(name) > first_letter and name[first_letter] == '.':
                     dirname = name[:first_letter]
                     name = name[first_letter+1:]
@@ -1209,58 +1231,24 @@ class Image:
         # pylint: disable=protected-access
         fullname, head = self.to_fullname(filename, default_head)
         size = len(data)
-        sectors_count = (size + SECTOR_SIZE - 1) // SECTOR_SIZE
 
         # If no side specified and file already exist, try to replace
         if head is None:
-            for side in self.sides:
-                if side.find_entry(fullname):
-                    head = side.head
-                    break
+            head = next((side.head for side in self.sides
+                         if side.find_entry(fullname) is not None), None)
 
         # If no side specified, find first side which can accommodate the file
         if head is None:
-            for side in self.sides:
-                if (side.isvalid and side.number_of_files < MAX_FILES
-                        and (side.largest_free_block > size
-                             or not no_compact
-                             and side.free_sectors >= sectors_count)):
-                    head = side.head
-                    break
+            head = next((side.head for side in self.sides
+                         if side.can_add_file(size, no_compact)), None)
 
         # Won't fit anywhere, just go with side 0
         if head is None:
             head = 0
 
         side = self.get_side(head)
-        side.check_valid()
-        entry = side.find_entry(fullname)
-        if entry is not None:
-            if not replace:
-                raise FileExistsError("file '%s' already exists" % entry.fullname)
-            if not ignore_access and entry.locked:
-                raise PermissionError("file '%s' is locked" % entry.fullname)
-            entry.delete(ignore_access)
-            entry = None
-        if side.number_of_files == MAX_FILES:
-            raise RuntimeError("catalog full")
-        if sectors_count > side.free_sectors:
-            raise RuntimeError("no space for file in floppy image")
-        if size > side.largest_free_block and not no_compact:
-            side.compact()
-        start_sector, index = side.find_free_block(size)
-        if index is None or start_sector is None:
-            raise RuntimeError("no continuous free block for file")
-        if load_addr is None:
-            load_addr = 0
-        if exec_addr is None:
-            exec_addr = load_addr
-        entry = side._insert_entry(index, fullname, start_sector, size)
-        entry.writeall(data)
-        entry.load_address = load_addr
-        entry.exec_address = exec_addr
-        entry.locked = locked
-        return entry
+        return side._add_entry(fullname, data, load_addr, exec_addr, locked,
+                               replace, ignore_access, no_compact)
 
     def import_files(self, os_files: Union[str, List[str]],
                      dfs_names: Union[str, List[str]] = None,

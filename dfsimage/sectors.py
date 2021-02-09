@@ -36,6 +36,8 @@ class Sectors:
             used_size: Optional; Size of used data e.g. if sectors
                 belong to a file.
         """
+        if used_size is not None and used_size > size:
+            raise ValueError("'used_size' parameter is too large")
         self.image = image
         self.chunks: Tuple[memoryview, ...] = tuple(chunks)
         self.size = size
