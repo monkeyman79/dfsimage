@@ -6,7 +6,7 @@ unsafe-load-any-extension=no
 [MESSAGES CONTROL]
 confidence=
 enable=all
-disable=locally-disabled,suppressed-message,file-ignored,useless-suppression
+disable=locally-disabled,suppressed-message,file-ignored,useless-suppression, protected-access
 
 [BASIC]
 include-naming-hint=yes

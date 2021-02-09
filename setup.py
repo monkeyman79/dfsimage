@@ -1,3 +1,4 @@
+# pylint: skip-file
 import setuptools
 
 setuptools.setup(entry_points={

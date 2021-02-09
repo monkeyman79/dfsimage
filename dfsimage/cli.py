@@ -250,7 +250,7 @@ class _AddImageAction(argparse.Action):
             choices=choices, required=required, help=help,
             metavar=metavar)
 
-    def get_dest(self, parser, namespace):
+    def _get_dest(self, parser, namespace):
         images = None
         selected = None
 
@@ -287,7 +287,7 @@ class _AddImageAction(argparse.Action):
         if len(values) == 0:
             return
 
-        images = self.get_dest(parser, namespace)
+        images = self._get_dest(parser, namespace)
         if images is values:
             raise RuntimeError("adding value to itself")
 
@@ -561,80 +561,93 @@ class _DumpProcess(_Process):
                     prefix += name
             print("%-32s %s" % (prefix, digest))
 
+    def _dump_files(self, image: Image):
+        for file_pat in self.files:
+            for file in image.get_files(file_pat):
+                if not self.digest:
+                    self.dump(file.readall())
+                else:
+                    digest = file.get_digest(self.mode, self.algorithm)
+                    self.show_digest(image, file.fullname, file.drive, digest)
+
+    def _dump_all(self, image: Image):
+        if not self.digest:
+            data = b''.join(side.readall() for side in image.default_sides)
+            self.dump(data)
+        else:
+            if image.default_side is None:
+                self.show_digest(image, None, None, image.get_digest(self.algorithm))
+            else:
+                side: Side = image.default_sides[0]
+                digest = side.get_digest(mode=self.mode, algorithm=self.algorithm)
+                name = ":%d." % side.drive if image.heads != 1 else None
+                self.show_digest(image, name, None, digest)
+
+    def _dump_sectors(self, image: Image):
+        if image.default_side is None:
+            RuntimeError("select disk side")
+
+        side = image.default_sides[0]
+        for sector in self.sectors:
+            start, _, end = sector.partition('-')
+            track, sect = self.get_sector_number(image, start)
+            if len(end) == 0:
+                endsect = sect
+                endtrack = track
+            else:
+                endtrack, endsect = self.get_sector_number(image, end)
+
+            data = side.get_sectors(track, sect, endtrack, endsect+1).readall()
+            if not self.digest:
+                self.dump(data)
+            else:
+                digest = get_digest(data, self.algorithm)
+                if endtrack != track or endsect != sect:
+                    name = "[sectors %d/%d-%d/%d]" % (track, sect, endtrack, endsect)
+                else:
+                    name = "[sector %d/%d]" % (track, sect)
+                self.show_digest(image, name, side.drive, digest)
+
+    def _dump_tracks(self, image: Image):
+        if image.default_side is None:
+            RuntimeError("select disk side")
+
+        side = image.default_sides[0]
+        for track in self.tracks:
+            start, _, end = track.partition('-')
+            track = int(start)
+            if len(end) == 0:
+                endtrack = track
+            else:
+                endtrack = int(end)
+
+            data = side.get_sectors(track, 0, endtrack+1, 0).readall()
+            if not self.digest:
+                self.dump(data)
+            else:
+                digest = get_digest(data, self.algorithm)
+                if endtrack != track:
+                    name = "[tracks %d-%d]" % (track, endtrack)
+                else:
+                    name = "[track %d]" % track
+                self.show_digest(image, name, side.drive, digest)
+
     def run(self):
         "Run dump"
         with _open_from_params(self.images[0], for_write=False,
                                warn_mode=self.warn_mode) as image:
 
             if self.files is not None and len(self.files) != 0:
-                for file_pat in self.files:
-                    for file in image.get_files(file_pat):
-                        if not self.digest:
-                            self.dump(file.readall())
-                        else:
-                            digest = file.get_digest(self.mode, self.algorithm)
-                            self.show_digest(image, file.fullname, file.drive, digest)
+                self._dump_files(image)
 
             if self.all:
-                if not self.digest:
-                    data = b''.join(side.readall() for side in image.default_sides)
-                    self.dump(data)
-                else:
-                    if image.default_side is None:
-                        self.show_digest(image, None, None, image.get_digest(self.algorithm))
-                    else:
-                        side: Side = image.default_sides[0]
-                        digest = side.get_digest(mode=self.mode,
-                                                 algorithm=self.algorithm)
-                        if image.heads != 1:
-                            self.show_digest(image, ":%d." % side.drive, None, digest)
-                        else:
-                            self.show_digest(image, None, None, digest)
+                self._dump_all(image)
 
             if self.sectors is not None and len(self.sectors) != 0:
-                if image.default_side is None:
-                    RuntimeError("select disk side")
-                side = image.default_sides[0]
-                for sector in self.sectors:
-                    start, _, end = sector.partition('-')
-                    track, sect = self.get_sector_number(image, start)
-                    if len(end) == 0:
-                        endsect = sect
-                        endtrack = track
-                    else:
-                        endtrack, endsect = self.get_sector_number(image, end)
-                    data = side.get_sectors(track, sect, endtrack, endsect+1).readall()
-                    if not self.digest:
-                        self.dump(data)
-                    else:
-                        if endtrack != track or endsect != sect:
-                            name = "[sectors %d/%d-%d/%d]" % (track, sect, endtrack, endsect)
-                        else:
-                            name = "[sector %d/%d]" % (track, sect)
-                        self.show_digest(image, name, side.drive,
-                                         get_digest(data, self.algorithm))
+                self._dump_sectors(image)
 
             if self.tracks is not None and len(self.tracks) != 0:
-                if image.default_side is None:
-                    RuntimeError("select disk side")
-                side = image.default_sides[0]
-                for track in self.tracks:
-                    start, _, end = track.partition('-')
-                    track = int(start)
-                    if len(end) == 0:
-                        endtrack = track
-                    else:
-                        endtrack = int(end)
-                    data = side.get_sectors(track, 0, endtrack+1, 0).readall()
-                    if not self.digest:
-                        self.dump(data)
-                    else:
-                        if endtrack != track:
-                            name = "[tracks %d-%d]" % (track, endtrack)
-                        else:
-                            name = "[track %d]" % track
-                        self.show_digest(image, name, side.drive,
-                                         get_digest(data, self.algorithm))
+                self._dump_tracks(image)
 
 
 def _dump_command(namespace, parser):
@@ -674,7 +687,6 @@ class _ModifyProcess(_Process):
                             else SIZE_OPTION_SHRINK if namespace.shrink
                             else None)
         self.compact = getattr(namespace, "compact", None)
-        self.format_command = False
         self.existing = False
         self.new_title = getattr(namespace, "new_title", None)
         self.title = getattr(namespace, "title", None)
@@ -701,6 +713,7 @@ class _ModifyProcess(_Process):
         self.sectors = getattr(namespace, "sector", None)
         self.all = getattr(namespace, "all", None)
         self.dump_format = getattr(namespace, "dump_format", None)
+        self.directory = None
         self.command = None
 
     @staticmethod
@@ -738,10 +751,9 @@ class _ModifyProcess(_Process):
         self.check_arg("--bootopt", self.bootopt, max_args)
         self.check_arg("--sequence", self.sequence, max_args)
 
-    def import_files(self, image: Image, imports: List[Dict[str, object]]):
-        """Import all files from list."""
+    def _cmd_import(self, image: Image):
         count = 0
-        for imp in imports:
+        for imp in self.files:
             os_file = cast(str, imp["name"])
             dfs_name = cast(Optional[str], imp["dfs_name"])
             load_addr = cast(Optional[int], imp["load_addr"])
@@ -764,135 +776,153 @@ class _ModifyProcess(_Process):
                 sys.stdin.read().encode("ascii"))[0]
         return Sectors.decode_hexdump(sys.stdin.read())
 
-    def build(self, image: Image):
-        """Execute 'build' command on image."""
+    def _build_files(self, image: Image):
+        for file in self.files:
+            names = file["name"]
+            load_addr = file["load_addr"]
+            exec_addr = file["exec_addr"]
+            locked = file["locked"]
+
+            if isinstance(names, str):
+                names = [names]
+
+            for name in names:
+                image.add_file(name, self._read_stdin(), load_addr, exec_addr,
+                               locked, self.replace, self.ignore_access, self.no_compact)
+
+    def _build_all(self, image: Image):
+        sectors = Sectors(image, [], 0, 0)
+        for side in image.default_sides:
+            sectors.extend(side.get_all_sectors())
+        sectors.writeall(self._read_stdin())
+        if self.warn_mode != WARN_NONE:
+            image.validate(self.warn_mode == WARN_ALL)
+
+    def _build_sectors(self, image: Image):
+        if image.default_side is None:
+            RuntimeError("select disk side")
+
+        for sector in self.sectors:
+            start, _, end = sector.partition('-')
+            track, sect = self.get_sector_number(image, start)
+            if len(end) == 0:
+                endsect = sect
+                endtrack = track
+            else:
+                endtrack, endsect = self.get_sector_number(image, end)
+            sectors = image.default_sides[0].get_sectors(track, sect, endtrack, endsect+1)
+            sectors.writeall(self._read_stdin())
+
+        if self.warn_mode != WARN_NONE:
+            image.validate(self.warn_mode == WARN_ALL)
+
+    def _build_tracks(self, image: Image):
+        if image.default_side is None:
+            RuntimeError("select disk side")
+
+        for track in self.tracks:
+            start, _, end = track.partition('-')
+            track = int(start)
+            if len(end) == 0:
+                endtrack = track
+            else:
+                endtrack = int(end)
+            sectors = image.default_sides[0].get_sectors(track, 0, endtrack+1, 0)
+            sectors.writeall(self._read_stdin())
+
+        if self.warn_mode != WARN_NONE:
+            image.validate(self.warn_mode == WARN_ALL)
+
+    def _cmd_build(self, image: Image):
         if self.files is not None and len(self.files) != 0:
-            for file in self.files:
-                names = file["name"]
-                if isinstance(names, str):
-                    names = [names]
-                for name in names:
-                    image.add_file(name, self._read_stdin(), file["load_addr"],
-                                   file["exec_addr"], file["locked"], self.replace,
-                                   self.ignore_access, self.no_compact)
+            self._build_files(image)
 
         if self.all:
-            sectors = Sectors(image, [], 0, 0)
-            for side in image.default_sides:
-                sectors.extend(side.get_all_sectors())
-            sectors.writeall(self._read_stdin())
-            if self.warn_mode != WARN_NONE:
-                image.validate(self.warn_mode == WARN_ALL)
+            self._build_all(image)
 
         if self.sectors is not None and len(self.sectors) != 0:
-            if image.default_side is None:
-                RuntimeError("select disk side")
-            for sector in self.sectors:
-                start, _, end = sector.partition('-')
-                track, sect = self.get_sector_number(image, start)
-                if len(end) == 0:
-                    endsect = sect
-                    endtrack = track
-                else:
-                    endtrack, endsect = self.get_sector_number(image, end)
-                sectors = image.default_sides[0].get_sectors(track, sect,
-                                                             endtrack, endsect+1)
-                sectors.writeall(self._read_stdin())
-            if self.warn_mode != WARN_NONE:
-                image.validate(self.warn_mode == WARN_ALL)
+            self._build_sectors(image)
 
         if self.tracks is not None and len(self.tracks) != 0:
-            if image.default_side is None:
-                RuntimeError("select disk side")
-            for track in self.tracks:
-                start, _, end = track.partition('-')
-                track = int(start)
-                if len(end) == 0:
-                    endtrack = track
-                else:
-                    endtrack = int(end)
-                sectors = image.default_sides[0].get_sectors(track, 0,
-                                                             endtrack+1, 0)
-                sectors.writeall(self._read_stdin())
-            if self.warn_mode != WARN_NONE:
-                image.validate(self.warn_mode == WARN_ALL)
+            self._build_tracks(image)
+
+    def _cmd_attrib(self, image: Image):
+        count = 0
+        for fileset in self.files:
+            patterns = fileset["name"]
+            load_addr = fileset["load_addr"]
+            exec_addr = fileset["exec_addr"]
+            locked = fileset["locked"]
+            entries = image.get_files(patterns)
+            count += len(entries)
+            for entry in entries:
+                if load_addr is not None:
+                    entry.load_address = load_addr
+                if exec_addr is not None:
+                    entry.exec_address = exec_addr
+                if locked is not None:
+                    entry.locked = locked
+        print("%s: %d files changed" % (image.filename, count))
+
+    def _cmd_format(self, image: Image):
+        image.format()
+
+    def _cmd_delete(self, image: Image):
+        if image.delete(filename=self.file,
+                        ignore_access=self.ignore_access,
+                        silent=self.silent):
+            print("%s: file deleted" % image.filename)
+
+    def _cmd_destroy(self, image: Image):
+        count = image.destroy(pattern=self.files,
+                              ignore_access=self.ignore_access)
+        print("%s: %d files deleted" % (image.filename, count))
+
+    def _cmd_lock(self, image: Image):
+        count = image.lock(pattern=self.files)
+        print("%s: %d files locked" % (image.filename, count))
+
+    def _cmd_unlock(self, image: Image):
+        count = image.unlock(pattern=self.files)
+        print("%s: %d files unlocked" % (image.filename, count))
+
+    def _cmd_rename(self, image: Image):
+        if image.rename(from_name=self.oldname, to_name=self.newname,
+                        replace=self.replace, ignore_access=self.ignore_access,
+                        no_compact=self.no_compact):
+            print("%s: file renamed" % (image.filename))
+
+    def _cmd_copy(self, image: Image):
+        if image.copy(from_name=self.oldname, to_name=self.newname,
+                      replace=self.replace, ignore_access=self.ignore_access,
+                      no_compact=self.no_compact,
+                      preserve_attr=self.preserve_locked):
+            print("%s: file copied" % (image.filename))
+
+    def _cmd_backup(self, image: Image):
+        with _open_from_params(self.from_image[0], for_write=False,
+                               warn_mode=self.warn_mode) as src_image:
+            image.backup(source=src_image)
+
+    def _cmd_copyover(self, image: Image):
+        with _open_from_params(self.from_image[0], for_write=False,
+                               warn_mode=self.warn_mode) as src_image:
+            count = image.copy_over(source=src_image, pattern=self.files,
+                                    replace=self.replace,
+                                    ignore_access=self.ignore_access,
+                                    no_compact=self.no_compact,
+                                    change_dir=self.directory is not None,
+                                    preserve_attr=self.preserve_locked,
+                                    continue_on_error=self.cont,
+                                    verbose=self.verbose)
+        print("%s: %d files copied" % (image.filename, count))
 
     def run_image(self, image: Image, params: Dict) -> None:
         """Apply operations to single image file."""
-        if self.format_command:
-            image.format()
 
-        if self.command == "delete":
-            if image.delete(filename=self.file,
-                            ignore_access=self.ignore_access,
-                            silent=self.silent):
-                print("%s: file deleted" % image.filename)
-
-        if self.command == "destroy":
-            count = image.destroy(pattern=self.files,
-                                  ignore_access=self.ignore_access)
-            print("%s: %d files deleted" % (image.filename, count))
-
-        if self.command == "build":
-            self.build(image)
-
-        if self.command == "import":
-            self.import_files(image, self.files)
-
-        if self.command == "lock":
-            count = image.lock(pattern=self.files)
-            print("%s: %d files locked" % (image.filename, count))
-
-        if self.command == "unlock":
-            count = image.unlock(pattern=self.files)
-            print("%s: %d files unlocked" % (image.filename, count))
-
-        if self.command == "attrib":
-            count = 0
-            for fileset in self.files:
-                patterns = fileset["name"]
-                entries = image.get_files(patterns)
-                count += len(entries)
-                for entry in entries:
-                    if fileset["load_addr"] is not None:
-                        entry.load_address = fileset["load_addr"]
-                    if fileset["exec_addr"] is not None:
-                        entry.exec_address = fileset["exec_addr"]
-                    if fileset["locked"] is not None:
-                        entry.locked = fileset["locked"]
-            print("%s: %d files changed" % (image.filename, count))
-
-        if self.command == "rename":
-            if image.rename(from_name=self.oldname, to_name=self.newname,
-                            replace=self.replace, ignore_access=self.ignore_access,
-                            no_compact=self.no_compact):
-                print("%s: file renamed" % (image.filename))
-
-        if self.command == "copy":
-            if image.copy(from_name=self.oldname, to_name=self.newname,
-                          replace=self.replace, ignore_access=self.ignore_access,
-                          no_compact=self.no_compact,
-                          preserve_attr=self.preserve_locked):
-                print("%s: file copied" % (image.filename))
-
-        if self.command == "backup":
-            with _open_from_params(self.from_image[0], for_write=False,
-                                   warn_mode=self.warn_mode) as src_image:
-                image.backup(source=src_image)
-
-        if self.command == "copyover":
-            directory = params["directory"]
-            with _open_from_params(self.from_image[0], for_write=False,
-                                   warn_mode=self.warn_mode) as src_image:
-                count = image.copy_over(source=src_image, pattern=self.files,
-                                        replace=self.replace,
-                                        ignore_access=self.ignore_access,
-                                        no_compact=self.no_compact,
-                                        change_dir=directory is not None,
-                                        preserve_attr=self.preserve_locked,
-                                        continue_on_error=self.cont,
-                                        verbose=self.verbose)
-            print("%s: %d files copied" % (image.filename, count))
+        self.directory = params['directory']
+        if self.command is not None:
+            self.command(image)
 
         if self.compact:
             image.compact()
@@ -923,7 +953,7 @@ def _create_command(namespace, _parser):
 
 def _format_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
-    proc.format_command = True
+    proc.command = proc._cmd_format
     proc.run()
 
 
@@ -931,68 +961,68 @@ def _import_command(namespace, parser):
     if namespace.files is None:
         parser.error("parameter FILE is required")
     proc = _ModifyProcess(namespace)
-    proc.command = "import"
+    proc.command = proc._cmd_import
     proc.run()
 
 
 def _delete_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
-    proc.command = "delete"
+    proc.command = proc._cmd_delete
     proc.run()
 
 
 def _lock_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
-    proc.command = "lock"
+    proc.command = proc._cmd_lock
     proc.run()
 
 
 def _unlock_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
-    proc.command = "unlock"
+    proc.command = proc._cmd_unlock
     proc.run()
 
 
 def _destroy_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
-    proc.command = "destroy"
+    proc.command = proc._cmd_destroy
     proc.run()
 
 
 def _copy_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
-    proc.command = "copy"
+    proc.command = proc._cmd_copy
     proc.run()
 
 
 def _rename_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
-    proc.command = "rename"
+    proc.command = proc._cmd_rename
     proc.run()
 
 
 def _backup_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
-    proc.command = "backup"
+    proc.command = proc._cmd_backup
     proc.run()
 
 
 def _copyover_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
-    proc.command = "copyover"
+    proc.command = proc._cmd_copyover
     proc.run()
 
 
 def _attrib_command(namespace, _parser):
     proc = _ModifyProcess(namespace)
     proc.existing = True
-    proc.command = "attrib"
+    proc.command = proc._cmd_attrib
     proc.run()
 
 
@@ -1009,7 +1039,7 @@ def _build_command(namespace, parser):
             and not namespace.all):
         parser.error("missing argument FILE")
     proc = _ModifyProcess(namespace)
-    proc.command = "build"
+    proc.command = proc._cmd_build
     proc.run()
 
 
