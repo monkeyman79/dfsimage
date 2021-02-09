@@ -9,12 +9,9 @@ import re as _re
 import sys
 import os
 
-# pylint: disable=wrong-import-position
-#sys.path.insert(0, os.path.join(os.path.dirname(__file__), "wildparse"))
-
-import argparse
-from argparse import HelpFormatter, CustomizableHelpFormatter  # type: ignore[attr-defined]
-from argparse import SUPPRESS, CustomHelpFormat  # type: ignore[attr-defined]
+from .wildparse import argparse
+from .wildparse.argparse import HelpFormatter, CustomizableHelpFormatter
+from .wildparse.argparse import SUPPRESS, CustomHelpFormat
 
 _SubParsersAction: Optional[Any] = None
 

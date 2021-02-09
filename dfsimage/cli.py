@@ -3,16 +3,12 @@
 # pylint: disable=redefined-builtin
 
 import sys
-import os
 import codecs
 
 from typing import Dict, Optional, List, cast
 
-# pylint: disable=wrong-import-position
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "wildparse"))
-
-import argparse
-from argparse import SUPPRESS
+from .wildparse import argparse
+from .wildparse.argparse import SUPPRESS
 
 from .args import CustomHelpFormat, MyHelpFormatter
 
