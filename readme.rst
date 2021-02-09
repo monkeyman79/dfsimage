@@ -97,9 +97,10 @@ global options
 command-specific options
 ------------------------
 
-.. _pattern:
 
 -p, --pattern=PATTERN
+  .. _pattern:
+
   File name or pattern. The `fnmatch` function is used for pattern matching.
   If the directory-matching part (e.g. ``'?.'``) is not present in the pattern,
   only files in the default directory are matched.
@@ -109,11 +110,11 @@ command-specific options
   * pattern ``'[seq]'`` matches any character in `seq`,
   * pattern ``'[!seq]'`` matches any character not in `seq`.
 
-.. _list-format:
-
 -f, --list-format=<cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT>
-  Listing format. (default: ``cat``)
+  .. _list-format:
 
+  Listing format. (default: ``cat``)
+  
   * ``raw`` - List file names
   * ``info`` - As displayed by ``*INFO`` command
   * ``inf`` - Format of ``.inf`` files
@@ -125,14 +126,14 @@ command-specific options
 
   See `file properties`_ for list of keyword available for custom format.
 
-.. _sort:
-
 --sort, --no-sort
+  .. _sort:
+
   Sort files by name.
 
-.. _header-format:
-
 --header-format=<cat,table,CUSTOM_FORMAT>
+  .. _header-format:
+
   Listing header format. (default: based of list format)
 
   * ``cat`` - As displayed by ``*CAT`` command.
@@ -141,57 +142,57 @@ command-specific options
 
   See `disk side properties`_ for list of keywords available for custom format.
 
-.. _footer-format:
-
 --footer-format=CUSTOM_FORMAT
+  .. _footer-format:
+
   Listing footer format.
   See `disk side properties`_ for list of keywords available for custom format.
 
-.. _image-header-format:
-
 --image-header-format=CUSTOM_FORMAT
+  .. _image-header-format:
+
   Listing header common for entire image file.
 
   * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{image_basename} {tracks}"``.
 
   See `image file properties`_ for list of keywords available for custom format.
 
-.. _image-footer-format:
-
 --image-footer-format=CUSTOM_FORMAT
+  .. _image-footer-format:
+
   Image Listing footer format.
   See `image file properties`_ for list of keywords available for custom format.
 
-.. _only-files:
-
 --only-files
+  .. _only-files:
+
   Include only files in listing - useful mainly for JSON, XML and table format
 
-.. _only-sides:
-
 --only-sides
+  .. _only-sides:
+
   Include only disk sides in listing - useful mainly for JSON, XML and table
   format
 
-.. _only-images:
-
 --only-images
+  .. _only-images:
+
   Include only disk images in listing - useful mainly for JSON, XML and table
   format
 
-.. _verbose:
-
 -v, --verbose
+  .. _verbose:
+
   Verbose mode - list copied files.
 
-.. _create-dir:
-
 --create-dir, --no-create-dir
+  .. _create-dir:
+
   Create output directories as needed. (default: False)
 
-.. _translation:
-
 --translation=<standard,safe>
+  .. _translation:
+
   Mode for translating dfs filename to host filename characters. (default:
   standard)
 
@@ -199,16 +200,16 @@ command-specific options
   * ``safe`` - replaces all characters, other than digits and letters with
     underscores.
 
-.. _include-drive-name:
-
 --include-drive-name
+  .. _include-drive-name:
+
   Include drive name (i.e. :0. or :2.) in inf files created from double sided
   floppy images. The resulting inf files will be incompatible with most
   software. Use this option carefully.
 
-.. _inf:
-
 --inf=<always,auto,never>
+  .. _inf:
+
   Use of inf files.
 
   * ``always`` - always create `.inf` files, fail import if inf file doesn't
@@ -218,65 +219,65 @@ command-specific options
   * ``never`` - never create `.inf` files and ignore existing inf files on
     import.
 
-.. _replace:
-
 --replace, --no-replace
+  .. _replace:
+
   Allow replacing existing files. (default: False)
 
-.. _ignore-access:
-
 --ignore-access, --no-ignore-access
+  .. _ignore-access:
+
   Allow deleting or replacing locked files. (default: False)
 
-.. _silent:
-
 --silent
+  .. _silent:
+
   Don't report error if the file to delete doesn't exist.
 
-.. _preserve-attr:
-
 --preserve-attr, --no-preserve-attr
+  .. _preserve-attr:
+
   Preserve ``'locked'`` attribute on copying. (default: False)
 
-.. _continue:
-
 --continue, --no-continue
+  .. _continue:
+
   Continue on non-fatal errors. (default: True)
 
-.. _output:
-
 -o, --output=OUTPUT
+  .. _output:
+
   Output directory or file name formatting string for export.
   Directory name must be terminated with path separator.
   See `file properties`_ for list of keyword available for formatting string.
 
-.. _format-opt:
-
 -f, --format=<raw,ascii,hex>
+  .. _format-opt:
+
   Data format. (default: raw)
 
   * ``raw`` - read or write raw bytes.
   * ``ascii`` - escape all non-readable or non-ascii characters.
   * ``hex`` - hexadecimal dump.
 
-.. _ellipsis:
-
 --ellipsis, --no-ellipsis
+  .. _ellipsis:
+
   Skip repeating lines in hex dump. (default: True)
 
-.. _width:
-
 --width=WIDTH
+  .. _width:
+
   Bytes per line in hex dump.
 
-.. _name:
-
 -n, --name
+  .. _name:
+
   Display each file or object name. Repeat for image name.
 
-.. _mode:
-
 -m, --mode=<all,used,file,data>
+  .. _mode:
+
   Digest mode for file:
 
   * ``all`` - include all attributes.
@@ -291,27 +292,27 @@ command-specific options
   * ``file`` - files sorted alphabetically; Load and exec addresses are included
     in the digest. File access mode and disk attributes are not included.
 
-.. _algorithm:
-
 -a, --algorithm=ALGORITHM
+  .. _algorithm:
+
   Digest algorithm, e.g. ``sha1``, ``sha256``, ``md5``
 
-.. _sector:
-
 --sector=SECTOR
+  .. _sector:
+
   Process sectors instead of files. Argument can be a range of sectors,
   with start and end separated by a dash. Physical sector address format is
   ``'track/sector'``.
 
-.. _track:
-
 --track=TRACK
+  .. _track:
+
   Process tracks instead of files. Argument can be a range of tracks, with start
   and end separated by a dash.
 
-.. _all:
-
 --all
+  .. _all:
+
   Process entire disk or disk side.
 
 image modify options
