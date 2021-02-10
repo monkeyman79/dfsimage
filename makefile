@@ -6,6 +6,8 @@ venv: venv/pyvenv.cfg
 
 package: dist/dfsimage-$(VERSION).tar.gz
 
+doc: doc/_build/.stamp
+
 clean:
 	rm -r venv dist build dfsimage.egg-info
 
@@ -21,4 +23,4 @@ dist/dfsimage-$(VERSION).tar.gz:
 	python -m build
 
 doc/_build/.stamp: readme.rst doc/conf.py
-	python -m sphinx . doc/_build readme.rst -c doc && touch $@
+	python -m sphinx doc doc/_build && touch $@

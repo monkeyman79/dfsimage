@@ -4,8 +4,6 @@ dfsimage
 
 **BBC Micro Acorn DFS floppy disk image maintenance utility**
 
-:Author: Tadek Kijkowski
-
 This package is a command-line utility and a Python module dedicated for
 maintenance of BBC Micro disk image files. Those files usually have extensions
 `.ssd` - for single sided disk image, or `.dsd` - for double sided disk image.
@@ -86,7 +84,7 @@ options
 global options
 --------------
 
---warn=<none,first,all>
+``--warn=<none,first,all>``
   Validation warnings display mode. (default: first)
 
   * ``none`` - Don't display validation warnings.
@@ -96,10 +94,9 @@ global options
 command-specific options
 ------------------------
 
+.. _pattern:
 
--p, --pattern=PATTERN
-  .. _pattern:
-
+``-p, --pattern=PATTERN``
   File name or pattern. The `fnmatch` function is used for pattern matching.
   If the directory-matching part (e.g. ``'?.'``) is not present in the pattern,
   only files in the default directory are matched.
@@ -109,9 +106,9 @@ command-specific options
   * pattern ``'[seq]'`` matches any character in `seq`,
   * pattern ``'[!seq]'`` matches any character not in `seq`.
 
--f, --list-format=<cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT>
-  .. _list-format:
+.. _list-format:
 
+``-f, --list-format=<cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT>``
   Listing format. (default: ``cat``)
   
   * ``raw`` - List file names
@@ -125,14 +122,14 @@ command-specific options
 
   See `file properties`_ for list of keyword available for custom format.
 
---sort, --no-sort
-  .. _sort:
+.. _sort:
 
+``--sort, --no-sort``
   Sort files by name.
 
---header-format=<cat,table,CUSTOM_FORMAT>
-  .. _header-format:
+.. _header-format:
 
+``--header-format=<cat,table,CUSTOM_FORMAT>``
   Listing header format. (default: based of list format)
 
   * ``cat`` - As displayed by ``*CAT`` command.
@@ -141,57 +138,57 @@ command-specific options
 
   See `disk side properties`_ for list of keywords available for custom format.
 
---footer-format=CUSTOM_FORMAT
-  .. _footer-format:
+.. _footer-format:
 
+``--footer-format=CUSTOM_FORMAT``
   Listing footer format.
   See `disk side properties`_ for list of keywords available for custom format.
 
---image-header-format=CUSTOM_FORMAT
-  .. _image-header-format:
+.. _image-header-format:
 
+``--image-header-format=CUSTOM_FORMAT``
   Listing header common for entire image file.
 
   * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{image_basename} {tracks}"``.
 
   See `image file properties`_ for list of keywords available for custom format.
 
---image-footer-format=CUSTOM_FORMAT
-  .. _image-footer-format:
+.. _image-footer-format:
 
+``--image-footer-format=CUSTOM_FORMAT``
   Image Listing footer format.
   See `image file properties`_ for list of keywords available for custom format.
 
---only-files
-  .. _only-files:
+.. _only-files:
 
+``--only-files``
   Include only files in listing - useful mainly for JSON, XML and table format
 
---only-sides
-  .. _only-sides:
+.. _only-sides:
 
+``--only-sides``
   Include only disk sides in listing - useful mainly for JSON, XML and table
   format
 
---only-images
-  .. _only-images:
+.. _only-images:
 
+``--only-images``
   Include only disk images in listing - useful mainly for JSON, XML and table
   format
 
--v, --verbose
-  .. _verbose:
+.. _verbose:
 
+``-v, --verbose``
   Verbose mode - list copied files.
 
---create-dir, --no-create-dir
-  .. _create-dir:
+.. _create-dir:
 
+``--create-dir, --no-create-dir``
   Create output directories as needed. (default: False)
 
---translation=<standard,safe>
-  .. _translation:
+.. _translation:
 
+``--translation=<standard,safe>``
   Mode for translating dfs filename to host filename characters. (default:
   standard)
 
@@ -199,16 +196,16 @@ command-specific options
   * ``safe`` - replaces all characters, other than digits and letters with
     underscores.
 
---include-drive-name
-  .. _include-drive-name:
+.. _include-drive-name:
 
+``--include-drive-name``
   Include drive name (i.e. :0. or :2.) in inf files created from double sided
   floppy images. The resulting inf files will be incompatible with most
   software. Use this option carefully.
 
---inf=<always,auto,never>
-  .. _inf:
+.. _inf:
 
+``--inf=<always,auto,never>``
   Use of inf files.
 
   * ``always`` - always create `.inf` files, fail import if inf file doesn't
@@ -218,65 +215,65 @@ command-specific options
   * ``never`` - never create `.inf` files and ignore existing inf files on
     import.
 
---replace, --no-replace
-  .. _replace:
+.. _replace:
 
+``--replace, --no-replace``
   Allow replacing existing files. (default: False)
 
---ignore-access, --no-ignore-access
-  .. _ignore-access:
+.. _ignore-access:
 
+``--ignore-access, --no-ignore-access``
   Allow deleting or replacing locked files. (default: False)
 
---silent
-  .. _silent:
+.. _silent:
 
+``--silent``
   Don't report error if the file to delete doesn't exist.
 
---preserve-attr, --no-preserve-attr
-  .. _preserve-attr:
+.. _preserve-attr:
 
+``--preserve-attr, --no-preserve-attr``
   Preserve ``'locked'`` attribute on copying. (default: False)
 
---continue, --no-continue
-  .. _continue:
+.. _continue:
 
+``--continue, --no-continue``
   Continue on non-fatal errors. (default: True)
 
--o, --output=OUTPUT
-  .. _output:
+.. _output:
 
+``-o, --output=OUTPUT``
   Output directory or file name formatting string for export.
   Directory name must be terminated with path separator.
   See `file properties`_ for list of keyword available for formatting string.
 
--f, --format=<raw,ascii,hex>
-  .. _format-opt:
+.. _format-opt:
 
+``-f, --format=<raw,ascii,hex>``
   Data format. (default: raw)
 
   * ``raw`` - read or write raw bytes.
   * ``ascii`` - escape all non-readable or non-ascii characters.
   * ``hex`` - hexadecimal dump.
 
---ellipsis, --no-ellipsis
-  .. _ellipsis:
+.. _ellipsis:
 
+``--ellipsis, --no-ellipsis``
   Skip repeating lines in hex dump. (default: True)
 
---width=WIDTH
-  .. _width:
+.. _width:
 
+``--width=WIDTH``
   Bytes per line in hex dump.
 
--n, --name
-  .. _name:
+.. _name:
 
+``-n, --name``
   Display each file or object name. Repeat for image name.
 
--m, --mode=<all,used,file,data>
-  .. _mode:
+.. _mode:
 
+``-m, --mode=<all,used,file,data>``
   Digest mode for file:
 
   * ``all`` - include all attributes.
@@ -291,37 +288,37 @@ command-specific options
   * ``file`` - files sorted alphabetically; Load and exec addresses are included
     in the digest. File access mode and disk attributes are not included.
 
--a, --algorithm=ALGORITHM
-  .. _algorithm:
+.. _algorithm:
 
+``-a, --algorithm=ALGORITHM``
   Digest algorithm, e.g. ``sha1``, ``sha256``, ``md5``
 
---sector=SECTOR
-  .. _sector:
+.. _sector:
 
+``--sector=SECTOR``
   Process sectors instead of files. Argument can be a range of sectors,
   with start and end separated by a dash. Physical sector address format is
   ``'track/sector'``.
 
---track=TRACK
-  .. _track:
+.. _track:
 
+``--track=TRACK``
   Process tracks instead of files. Argument can be a range of tracks, with start
   and end separated by a dash.
 
---all
-  .. _all:
+.. _all:
 
+``--all``
   Process entire disk or disk side.
 
 image modify options
 --------------------
 
---title=TITLE
+``--title=TITLE``
   Set disk title.
---new-title=TITLE
+``--new-title=TITLE``
   Set disk title for newly created disk images.
---bootopt=<off,LOAD,RUN,EXEC>
+``--bootopt=<off,LOAD,RUN,EXEC>``
   Set disk boot option.
 
   * off - No action.
@@ -329,17 +326,17 @@ image modify options
   * RUN - Execute `*RUN $.!BOOT` command.
   * EXEC - Execute `*EXEC $.!BOOT` command.
 
---sequence=SEQUENCE
+``--sequence=SEQUENCE``
   Set catalog sequence number. Sequence number is a Binary Coded Decimal value
   incremented by the Disk Filing System each time the disk catalog is modified.
---compact, --no-compact
+``--compact, --no-compact``
   Coalesce fragmented free space on disk. Default is to compact disk if needed
   to make space for new file.
---shrink
+``--shrink``
   Shrink disk image file to minimum size by trimming unused sectors. Such image
   files are smaller, but cannot be memory-mapped and may have to be resized in
   flight by tools.
---expand
+``--expand``
   Expand disk image file to maximum size.
 
 image file options
@@ -348,23 +345,23 @@ image file options
 Image file options apply to the first following disk image file. Those options
 must be specified before the corresponding image file name.
 
---new
+``--new``
   Create new image file. Fail if file already exists.
---existing
+``--existing``
   Open existing image. Fail if file doesn't exist.
---always
+``--always``
   Create new image or open existing image,. This is the default.
--4<0>, -8<0>, --tracks=<80,40>
+``-4, -8, --tracks=<80,40>``
   Select between 80 and 40 track disks. Default for existing disk images is try
   to determine current disk format based on the image file size. Default for new
   disk images is 80 tracks.
--S, -D, --sides=<1,2>
+``-S, -D, --sides=<1,2>``
   Select between single and double sided disk images. Default is to try to
   determine number of sides from disk extension and size: files with extension
   ``.dsd`` are open as double sided, other files are open as double sided based
   on their size. Default for new images is two sides for images with ``.dsd``
   extension and one side for all other.
--I, -L, --interleaved, --linear
+``-I, -L, --interleaved, --linear``
   Select double sided disk data layout between interleaved and linear. The
   interleaved format is more common and more widely supported. In the
   interleaved format, track data of each floppy side is interleaved - side 1
@@ -375,9 +372,9 @@ must be specified before the corresponding image file name.
   For the theoretical 40 tracks, double sided ``.ssd`` files, you would have to
   manually specify ``-40``, ``-D`` and ``--linear``, because they cannot be
   reliably distinguished from 80 track single sided disk images.
--1, -2, --side=<1,2>
+``-1, -2, --side=<1,2>``
   Select disk side in case of double sided disks.
--d, --directory=DIRECTORY
+``-d, --directory=DIRECTORY``
   Default DFS directory.
 
 file options
@@ -386,13 +383,13 @@ file options
 File options apply to the first following file name. Those options override
 values read from the inf file.
 
---load-address=ADDRESS
+``--load-address=ADDRESS``
   Load address for the following file. Must be a hexadecimal number.
---exec-address=ADDRESS
+``--exec-address=ADDRESS``
   Exec address for the following file. Must be a hexadecimal number.
---locked, --no-locked
+``--locked, --no-locked``
   Set locked attribute.
---dfs-name=NAME
+``--dfs-name=NAME``
   DFS name for the imported file.
 
 commands
