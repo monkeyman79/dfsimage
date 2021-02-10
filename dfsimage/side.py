@@ -898,10 +898,10 @@ class Side:
         if fmt == LIST_FORMAT_CAT:
             self._print_cat_lines((e for e in entries
                                    if e.directory == self.image.current_dir),
-                                   file, False)
+                                  file, False)
             self._print_cat_lines((e for e in entries
                                    if e.directory != self.image.current_dir),
-                                   file, True)
+                                  file, True)
 
         elif fmt == LIST_FORMAT_JSON:
             attrs = self.get_properties(for_format=False, recurse=True,
