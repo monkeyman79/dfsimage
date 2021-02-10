@@ -9,3 +9,7 @@ img
 builtins.pyi
 out
 .mypy_cache
+build
+dist
+venv
+*.egg-info

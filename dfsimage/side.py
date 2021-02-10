@@ -826,10 +826,14 @@ class Side:
             raise ValueError("invalid listing format")
 
     @staticmethod
-    def _print_cat_lines(entries: Iterable[Entry], file):
+    def _print_cat_lines(entries: Iterable[Entry], file, gap):
         """Print catalog lines, two files per line."""
+
         fname1 = None
         for entry in entries:
+            if gap:
+                print('', file=file)
+                gap = False
             fname = entry.listing_entry(LIST_FORMAT_CAT)
             if fname1 is not None:
                 print('%-20s%s' % (fname1, fname), file=file)
@@ -893,10 +897,11 @@ class Side:
 
         if fmt == LIST_FORMAT_CAT:
             self._print_cat_lines((e for e in entries
-                                   if e.directory == self.image.current_dir), file)
-            print('', file=file)
+                                   if e.directory == self.image.current_dir),
+                                   file, False)
             self._print_cat_lines((e for e in entries
-                                   if e.directory != self.image.current_dir), file)
+                                   if e.directory != self.image.current_dir),
+                                   file, True)
 
         elif fmt == LIST_FORMAT_JSON:
             attrs = self.get_properties(for_format=False, recurse=True,

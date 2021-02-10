@@ -1584,7 +1584,7 @@ DIGEST_EPILOG = """examples:
 """
 
 
-def cli(prog=None):
+def cli(prog=None, argv=None):
     """Command line interface"""
 
     if prog is None:
@@ -1826,7 +1826,7 @@ def cli(prog=None):
     _add_import_file_options(cmd, "template")
     options_template.append(cmd)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if hasattr(args, "selected"):
         if args.from_image is None or len(args.from_image) == 0:
             parser.error("parameter FROM_IMAGE is required")
