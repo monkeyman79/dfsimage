@@ -12,6 +12,48 @@ This package allows indexing contents of the disk images, importing files to and
 exporting from the disk images and modifying disk images in place, such as
 renaming files or changing disk title.
 
+usage
+=====
+
+.. code-block:: shell-session
+
+  dfsimage COMMAND IMAGE [options]...
+  dfsimage --help [COMMAND]
+  dfsimage --help-options
+  dfsimage --help-format
+
+**examples**:
+
+Index all floppy images with contents from the 'images' directory to 'index.json' file
+
+.. code-block:: shell-session
+
+  dfsimage index -f json images/*.ssd images/*.dsd > index.json
+
+Covert a linear double sided image to a '.dsd' file
+
+.. code-block:: shell-session
+
+  dfsimage convert --from -D -L linear.img --to inter.dsd
+
+Import all files from the 'files' directory to a new image 'games.ssd'
+
+.. code-block:: shell-session
+
+  dfsimage import --new games.ssd --title="GAMES" files/*
+
+Export all files from the 'games.ssd' image to the 'files' directory
+
+.. code-block:: shell-session
+
+  dfsimage export games.ssd -o files/
+
+Index all floppy image contents from the 'images' directory to text table file
+
+.. code-block:: shell-session
+
+  dfsimage index --only-files -f table images/*.ssd images/*.dsd > files.csv
+
 installation
 ============
 
@@ -97,50 +139,8 @@ Execute the steps below in the Windows PowerShell:
 
 Now close your console window and open it again to make the change take effect.
 
-usage
-=====
-
-.. code-block:: shell-session
-
-  dfsimage COMMAND IMAGE [options]...
-  dfsimage --help [COMMAND]
-  dfsimage --help-options
-  dfsimage --help-format
-
-**examples**:
-
-Index all floppy images with contents from the 'images' directory to 'index.json' file
-
-.. code-block:: shell-session
-
-  dfsimage index -f json images/*.ssd images/*.dsd > index.json
-
-Covert linear double sided image to a '.dsd' file
-
-.. code-block:: shell-session
-
-  dfsimage convert --from -D -L linear.img --to inter.dsd
-
-Import all files from 'files' directory to new image 'games.ssd'
-
-.. code-block:: shell-session
-
-  dfsimage import --new games.ssd --title="GAMES" files/*
-
-Export all files from the 'games.ssd' image to 'files' directory
-
-.. code-block:: shell-session
-
-  dfsimage export games.ssd -o files/
-
-Index all floppy image contents from the 'images' directory to text table file
-
-.. code-block:: shell-session
-
-  dfsimage index --only-files -f table image/*.ssd images/*.dsd > files.csv
-
 command list
-------------
+============
 
 .. |list| replace:: ``list``
 .. |create| replace:: ``create``
@@ -974,3 +974,10 @@ Image file properties are:
 * ``max_size``             - Maximum disk image size.
 * ``is_valid``             - True if disk validation succeeded.
 * ``is_linear``            - True if floppy disk image file has linear layout is single sided or is double sided ssd file.
+
+development status
+==================
+
+The package is functionally complete, but lacks tests and Python module documentation.
+
+Plan for the future is to add support for the MMB files.
