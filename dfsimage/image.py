@@ -1948,7 +1948,7 @@ class _ImportFiles:
             # Add file if not already encountered
             if host_file not in fileset:
                 fileset.add(host_file)
-                filedict = {'displayfile': displayfile, 'hostfile': host_file, 'basename': basename,
+                filedict = {'displayname': displayfile, 'hostfile': host_file, 'basename': basename,
                             'dfs_name': dfs_name, 'inf': inf}
                 self.filelist.append(filedict)
 

@@ -2,6 +2,7 @@
 
 # pylint: disable=redefined-builtin
 
+import os
 import sys
 import codecs
 
@@ -542,8 +543,17 @@ class _DumpProcess(_Process):
         "Dump data"
         if self.dump_format == "raw":
             sys.stdout.buffer.write(data)
+
+        elif self.dump_format == "text":
+            newline = os.linesep.encode("ascii")
+            data = newline.join(data.splitlines())
+            if len(data) != 0:
+                data = data + newline
+            sys.stdout.buffer.write(data)
+
         elif self.dump_format == "ascii":
             print(codecs.escape_encode(data)[0].decode("ascii"))
+
         else:
             Sectors.hexdump_buffer(data, width=self.width, ellipsis=self.ellipsis)
 
@@ -773,9 +783,17 @@ class _ModifyProcess(_Process):
     def _read_stdin(self) -> bytes:
         if self.dump_format == "raw":
             return sys.stdin.buffer.read()
+
+        if self.dump_format == "text":
+            data = b'\r'.join(sys.stdin.buffer.read().splitlines())
+            if len(data) != 0:
+                data = data + b'\r'
+            return data
+
         if self.dump_format == "ascii":
             return codecs.escape_decode(   # type: ignore[attr-defined]
                 sys.stdin.read().encode("ascii"))[0]
+
         return Sectors.decode_hexdump(sys.stdin.read())
 
     def _build_files(self, image: Image):
@@ -1378,11 +1396,11 @@ def _add_dump_options(parser, command, group=None):
         group = parser.add_argument_group("%s options" % command)
     add = group.add_argument
     if command in ("dump", "build"):
-        add("-f", "--format", choices=['raw', 'ascii', 'hex'],
+        add("-f", "--format", choices=['raw', 'text', 'ascii', 'hex'],
             dest="dump_format",
             help="Data format. (default: raw)", default="raw")
     elif command == "command":
-        add("--format", choices=['raw', 'ascii', 'hex'],
+        add("--format", choices=['raw', 'text', 'ascii', 'hex'],
             dest="dump_format",
             help=DATA_FORMAT_LONG_HELP, default="raw")
     if command in ("dump", "command"):
@@ -1541,7 +1559,7 @@ BUILD_USAGE = ('%(prog)s [global options] [build options] [image modify options]
                '[image file options] IMAGE ([file options] FILE)...')
 
 BUILD_EPILOG = """examples:
-  dfsimage list image.ssd | tr '\\n' '\\r' | dfsimage build image.ssd CATALOG
+  dfsimage list image.ssd | dfsimage build -f text image.ssd CATALOG
 
   dfsimage write image.ssd --sector=0-1 < cat-sectors.bin
 """

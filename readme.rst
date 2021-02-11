@@ -287,6 +287,7 @@ common command options
   Data format. (default: raw)
 
   * ``raw`` - read or write raw bytes.
+  * ``text`` - convert line endings to and from BBC's ``'\r'``
   * ``ascii`` - escape all non-readable or non-ascii characters.
   * ``hex`` - hexadecimal dump.
 
