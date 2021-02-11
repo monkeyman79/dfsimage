@@ -100,7 +100,7 @@ Now close your console window and open it again to make the change take effect.
 usage
 =====
 
-.. code-block:: sh
+.. code-block:: shell-session
 
   dfsimage COMMAND IMAGE [options]...
   dfsimage --help [COMMAND]
@@ -109,23 +109,35 @@ usage
 
 **examples**:
 
-.. code-block:: sh
+Index all floppy images with contents from the 'images' directory to 'index.json' file
 
-  # Index all floppy images with contents from the 'images' directory to 'index.json' file
+.. code-block:: shell-session
+
   dfsimage index -f json images/*.ssd images/*.dsd > index.json
 
-  # Covert linear double sided image to a '.dsd' file
+Covert linear double sided image to a '.dsd' file
+
+.. code-block:: shell-session
+
   dfsimage convert --from -D -L linear.img --to inter.dsd
 
-  # Import all files from 'files' directory to new image 'games.ssd'
+Import all files from 'files' directory to new image 'games.ssd'
+
+.. code-block:: shell-session
+
   dfsimage import --new games.ssd --title="GAMES" files/*
 
-  # Export all files from the 'games.ssd' image to 'files' directory
+Export all files from the 'games.ssd' image to 'files' directory
+
+.. code-block:: shell-session
+
   dfsimage export games.ssd -o files/
 
-  # Index all floppy image contents from the 'images' directory to text table file
-  dfsimage index --only-files -f table image/*.ssd images/*.dsd > files.csv
+Index all floppy image contents from the 'images' directory to text table file
 
+.. code-block:: shell-session
+
+  dfsimage index --only-files -f table image/*.ssd images/*.dsd > files.csv
 
 command list
 ------------
