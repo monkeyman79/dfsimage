@@ -4,7 +4,7 @@ dfsimage
 
 **BBC Micro Acorn DFS floppy disk image maintenance utility**
 
-This package is a command-line utility and a Python module dedicated for
+This package contains a command-line utility and a Python module dedicated for
 maintenance of BBC Micro disk image files. Those files usually have extensions
 `.ssd` - for single sided disk image, or `.dsd` - for double sided disk image.
 
@@ -12,15 +12,120 @@ This package allows indexing contents of the disk images, importing files to and
 exporting from the disk images and modifying disk images in place, such as
 renaming files or changing disk title.
 
+installation
+============
+
+At this point the package is not yet available in the PyPI repository, so 
+it has to be build and installed manually:
+
+Linux
+-----
+
+Make sure that pip and dependencies are installed.
+If you are running Debian, Ubuntu or derived Linux distribution,
+install the python3-pip package like this.
+
+.. code-block:: shell-session
+
+  ~$ sudo apt-get install python3-pip
+
+Upgrade pip to latest version.
+
+.. code-block:: shell-session
+
+  ~$ python -m pip install --upgrade pip
+
+Clone the repository
+
+.. code-block:: shell-session
+
+  ~/src$ git clone https://github.com/monkeyman79/dfsimage.git
+  ~/src$ cd dfsimage
+
+Build and install package
+
+.. code-block:: shell-session
+
+  ~/src/dfsimage$ python -m pip install .
+
+Windows
+-------
+
+Installation of the package on Windows is similar, you just have to ensure
+that both Python and Git are installed in your system before this package can
+be installed.
+
+* Python can be downloaded from here: https://www.python.org/downloads/
+* Git for Windows can be downloaded from here: https://gitforwindows.org/
+
+Make sure to add both Python and Git to your PATH when asked by the installer.
+
+Execute steps below in the either Command Prompt or Windows PowerShell.
+
+.. code-block:: ps1con
+
+  PS C:\Users\you> mkdir Documents\src
+  PS C:\Users\you> cd Documents\src
+  PS C:\Users\you\Documents\src> git clone "https://github.com/monkeyman79/dfsimage.git"
+  PS C:\Users\you\Documents\src> cd dfsimage
+  PS C:\Users\you\Documents\src\dfsimage> python -m pip install --user .
+
+During installation, you may see the following warning message:
+
+  **WARNING**: The script dfsimage.exe is installed in ``'C:\Users\you\AppData\Local\Packages\...\Scripts'``
+  which is not on PATH.
+
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+
+This means that the ``'dfsimage'`` command will not be directly available. There are two options here:
+
+* Always execute dfsimage via ``python -m dfsimage COMMAND...``
+* Add the Scripts directory to your PATH variable
+
+**Adding Scripts directory to your PATH variable**
+
+We can combine powers of Python and PowerShell to automatically add your local
+Scripts directory to PATH.
+Execute the steps below in the Windows PowerShell:
+
+.. code-block:: ps1con
+
+  PS C:\Users\you> $USER_SITE = python -m site --user-site
+  PS C:\Users\you> $USER_SCRIPTS = (Get-ChildItem (Split-Path -Path $USER_SITE -Parent) Scripts).FullName
+  PS C:\Users\you> [Environment]::SetEnvironmentVariable("PATH",
+  >> [Environment]::GetEnvironmentVariable("PATH", "User") + ";$USER_SCRIPTS", "User")
+
+Now close your console window and open it again to make the change take effect.
+
 usage
 =====
 
-::
+.. code-block:: sh
 
-     dfsimage COMMAND IMAGE [options]...
-     dfsimage --help [COMMAND]
-     dfsimage --help-options
-     dfsimage --help-format
+  dfsimage COMMAND IMAGE [options]...
+  dfsimage --help [COMMAND]
+  dfsimage --help-options
+  dfsimage --help-format
+
+**examples**:
+
+.. code-block:: sh
+
+  # Index all floppy images with contents from the 'images' directory to 'index.json' file
+  dfsimage index -f json images/*.ssd images/*.dsd > index.json
+
+  # Covert linear double sided image to a '.dsd' file
+  dfsimage convert --from -D -L linear.img --to inter.dsd
+
+  # Import all files from 'files' directory to new image 'games.ssd'
+  dfsimage import --new games.ssd --title="GAMES" files/*
+
+  # Export all files from the 'games.ssd' image to 'files' directory
+  dfsimage export games.ssd -o files/
+
+  # Index all floppy image contents from the 'images' directory to text table file
+  dfsimage index --only-files -f table image/*.ssd images/*.dsd > files.csv
+
 
 command list
 ------------
@@ -91,12 +196,13 @@ global options
   * ``first`` - Display first warning and skip further validation
   * ``all`` - Display all validation warning. Some warnings may be redundant.
 
-command-specific options
+common command options
 ------------------------
 
+.. |pattern| replace:: ``-p, --pattern=PATTERN``
 .. _pattern:
 
-``-p, --pattern=PATTERN``
+|pattern|
   File name or pattern. The `fnmatch` function is used for pattern matching.
   If the directory-matching part (e.g. ``'?.'``) is not present in the pattern,
   only files in the default directory are matched.
@@ -106,209 +212,98 @@ command-specific options
   * pattern ``'[seq]'`` matches any character in `seq`,
   * pattern ``'[!seq]'`` matches any character not in `seq`.
 
-.. _list-format:
+  Commands: list_, export_
 
-``-f, --list-format=<cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT>``
-  Listing format. (default: ``cat``)
-  
-  * ``raw`` - List file names
-  * ``info`` - As displayed by ``*INFO`` command
-  * ``inf`` - Format of ``.inf`` files
-  * ``cat`` - As displayed by ``*CAT`` command
-  * ``json`` - JSON
-  * ``xml`` - XML
-  * ``table`` - text table
-  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{fullname:9} {size:06}"``.
-
-  See `file properties`_ for list of keyword available for custom format.
-
-.. _sort:
-
-``--sort, --no-sort``
-  Sort files by name.
-
-.. _header-format:
-
-``--header-format=<cat,table,CUSTOM_FORMAT>``
-  Listing header format. (default: based of list format)
-
-  * ``cat`` - As displayed by ``*CAT`` command.
-  * ``table`` - text table
-  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{title:12} {side}"``.
-
-  See `disk side properties`_ for list of keywords available for custom format.
-
-.. _footer-format:
-
-``--footer-format=CUSTOM_FORMAT``
-  Listing footer format.
-  See `disk side properties`_ for list of keywords available for custom format.
-
-.. _image-header-format:
-
-``--image-header-format=CUSTOM_FORMAT``
-  Listing header common for entire image file.
-
-  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{image_basename} {tracks}"``.
-
-  See `image file properties`_ for list of keywords available for custom format.
-
-.. _image-footer-format:
-
-``--image-footer-format=CUSTOM_FORMAT``
-  Image Listing footer format.
-  See `image file properties`_ for list of keywords available for custom format.
-
-.. _only-files:
-
-``--only-files``
-  Include only files in listing - useful mainly for JSON, XML and table format
-
-.. _only-sides:
-
-``--only-sides``
-  Include only disk sides in listing - useful mainly for JSON, XML and table
-  format
-
-.. _only-images:
-
-``--only-images``
-  Include only disk images in listing - useful mainly for JSON, XML and table
-  format
-
+.. |verbose| replace:: ``-v, --verbose``
 .. _verbose:
 
-``-v, --verbose``
+|verbose|
   Verbose mode - list copied files.
 
-.. _create-dir:
+  Commands: import_, export_, copy-over_
 
-``--create-dir, --no-create-dir``
-  Create output directories as needed. (default: False)
-
-.. _translation:
-
-``--translation=<standard,safe>``
-  Mode for translating dfs filename to host filename characters. (default:
-  standard)
-
-  * ``standard`` - replaces characters illegal on Windows with underscores.
-  * ``safe`` - replaces all characters, other than digits and letters with
-    underscores.
-
-.. _include-drive-name:
-
-``--include-drive-name``
-  Include drive name (i.e. :0. or :2.) in inf files created from double sided
-  floppy images. The resulting inf files will be incompatible with most
-  software. Use this option carefully.
-
+.. |inf| replace:: ``--inf={always,auto,never}``
 .. _inf:
 
-``--inf=<always,auto,never>``
+|inf|
   Use of inf files.
 
   * ``always`` - always create `.inf` files, fail import if inf file doesn't
     exist.
-  * ``auto`` - create `.inf` file if load or exec address is not 0, file is
-    locked or filename cannot be directly translated to OS filename.
+  * ``auto`` - create `.inf` file if either load or exec address is not 0, file
+    is locked or filename cannot be directly translated to OS filename.
   * ``never`` - never create `.inf` files and ignore existing inf files on
     import.
 
+  Commands: import_, export_
+
+.. |replace| replace:: ``--replace, --no-replace``
 .. _replace:
 
-``--replace, --no-replace``
+|replace|
   Allow replacing existing files. (default: False)
 
+  Commands: import_, export_, build_, copy-over_, copy_, rename_
+
+.. |ignore-access| replace:: ``--ignore-access, --no-ignore-access``
 .. _ignore-access:
 
-``--ignore-access, --no-ignore-access``
+|ignore-access|
   Allow deleting or replacing locked files. (default: False)
 
-.. _silent:
+  Commands: import_, build_, copy-over_, copy_, rename_, delete_, destroy_
 
-``--silent``
-  Don't report error if the file to delete doesn't exist.
-
+.. |preserve-attr| replace:: ``--preserve-attr, --no-preserve-attr``
 .. _preserve-attr:
 
-``--preserve-attr, --no-preserve-attr``
+|preserve-attr|
   Preserve ``'locked'`` attribute on copying. (default: False)
 
+  Commands: copy-over_, copy_
+
+.. |continue| replace:: ``--continue, --no-continue``
 .. _continue:
 
-``--continue, --no-continue``
+|continue|
   Continue on non-fatal errors. (default: True)
 
-.. _output:
+  Commands: import_, export_, copy-over_
 
-``-o, --output=OUTPUT``
-  Output directory or file name formatting string for export.
-  Directory name must be terminated with path separator.
-  See `file properties`_ for list of keyword available for formatting string.
-
+.. |format-opt| replace:: ``-f, --format={raw,ascii,hex}``
 .. _format-opt:
 
-``-f, --format=<raw,ascii,hex>``
+|format-opt|
   Data format. (default: raw)
 
   * ``raw`` - read or write raw bytes.
   * ``ascii`` - escape all non-readable or non-ascii characters.
   * ``hex`` - hexadecimal dump.
 
-.. _ellipsis:
+  Commands: dump_, build_
 
-``--ellipsis, --no-ellipsis``
-  Skip repeating lines in hex dump. (default: True)
-
-.. _width:
-
-``--width=WIDTH``
-  Bytes per line in hex dump.
-
-.. _name:
-
-``-n, --name``
-  Display each file or object name. Repeat for image name.
-
-.. _mode:
-
-``-m, --mode=<all,used,file,data>``
-  Digest mode for file:
-
-  * ``all`` - include all attributes.
-  * ``file`` - include load and execution addresses, but not access mode.
-  * ``data`` - only file contents, don't include load and execution addresses
-    or access mode.
-
-  Digest mode for disk side:
-
-  * ``all`` - include all sectors.
-  * ``used`` - include used portions of catalog sectors and file sectors.
-  * ``file`` - files sorted alphabetically; Load and exec addresses are included
-    in the digest. File access mode and disk attributes are not included.
-
-.. _algorithm:
-
-``-a, --algorithm=ALGORITHM``
-  Digest algorithm, e.g. ``sha1``, ``sha256``, ``md5``
-
+.. |sector| replace:: ``--sector=[TRACK/]SECTOR[-[TRACK/]SECTOR]``
 .. _sector:
 
-``--sector=SECTOR``
+|sector|
   Process sectors instead of files. Argument can be a range of sectors,
   with start and end separated by a dash. Physical sector address format is
   ``'track/sector'``.
 
+  Commands: dump_, build_, digest_
+
+.. |track| replace:: ``--track=TRACK[-TRACK]``
 .. _track:
 
-``--track=TRACK``
+|track|
   Process tracks instead of files. Argument can be a range of tracks, with start
   and end separated by a dash.
 
+  Commands: dump_, build_, digest_
+
+.. |all| replace:: ``--all``
 .. _all:
 
-``--all``
+|all|
   Process entire disk or disk side.
 
 image modify options
@@ -322,9 +317,9 @@ image modify options
   Set disk boot option.
 
   * off - No action.
-  * LOAD - Execute `*LOAD $.!BOOT` command.
-  * RUN - Execute `*RUN $.!BOOT` command.
-  * EXEC - Execute `*EXEC $.!BOOT` command.
+  * LOAD - Execute ``*LOAD $.!BOOT`` command.
+  * RUN - Execute ``*RUN $.!BOOT`` command.
+  * EXEC - Execute ``*EXEC $.!BOOT`` command.
 
 ``--sequence=SEQUENCE``
   Set catalog sequence number. Sequence number is a Binary Coded Decimal value
@@ -351,11 +346,11 @@ must be specified before the corresponding image file name.
   Open existing image. Fail if file doesn't exist.
 ``--always``
   Create new image or open existing image,. This is the default.
-``-4, -8, --tracks=<80,40>``
+``-4, -8, --tracks={80,40}``
   Select between 80 and 40 track disks. Default for existing disk images is try
   to determine current disk format based on the image file size. Default for new
   disk images is 80 tracks.
-``-S, -D, --sides=<1,2>``
+``-S, -D, --sides={1,2}``
   Select between single and double sided disk images. Default is to try to
   determine number of sides from disk extension and size: files with extension
   ``.dsd`` are open as double sided, other files are open as double sided based
@@ -372,7 +367,7 @@ must be specified before the corresponding image file name.
   For the theoretical 40 tracks, double sided ``.ssd`` files, you would have to
   manually specify ``-40``, ``-D`` and ``--linear``, because they cannot be
   reliably distinguished from 80 track single sided disk images.
-``-1, -2, --side=<1,2>``
+``-1, -2, --side={1,2}``
   Select disk side in case of double sided disks.
 ``-d, --directory=DIRECTORY``
   Default DFS directory.
@@ -398,372 +393,465 @@ commands
 list
 ----
 
-  List files or disk image properties.
+List files or disk image properties.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage list [`global options`_] [listing options] ([`image file options`_] IMAGE)...
-    dfsimage cat [`global options`_] [listing options] ([`image file options`_] IMAGE)...
-    dfsimage index [`global options`_] [listing options] ([`image file options`_] IMAGE)...
+  dfsimage list [`global options`_] [listing options] ([`image file options`_] IMAGE)...
+  dfsimage cat [`global options`_] [listing options] ([`image file options`_] IMAGE)...
+  dfsimage index [`global options`_] [listing options] ([`image file options`_] IMAGE)...
 
-  **listing options**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --pattern_
-    --list-format_
-    --sort_
-    --header-format_
-    --footer-format_
-    --image-header-format_
-    --image-footer-format_
-    --only-files_
-    --only-sides_
-    --only-images_
+  dfsimage cat image.ssd
+  dfsimage list --image-header="Image {image_filename}" --header="Side {side}" --list-format="{fullname:12} {sha1}" img/*.dsd
+  dfsimage index -f json images/*.ssd images/*.dsd > index.json
 
-  **examples**::
+**listing options**:
 
-    dfsimage list image.ssd
-    dfsimage list --image-header="Image {image_filename}" --header="Side {side}" --list-format="{fullname:12} {sha1}" img/*.dsd
+|pattern|_
+
+``-f, --list-format=<cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT>``
+  Listing format. (default: ``cat``)
+  
+  * ``raw`` - List file names
+  * ``info`` - As displayed by ``*INFO`` command
+  * ``inf`` - Format of ``.inf`` files
+  * ``cat`` - As displayed by ``*CAT`` command
+  * ``json`` - JSON
+  * ``xml`` - XML
+  * ``table`` - Text table. Columns are separated with ``'|'`` character.
+  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{fullname:9} {size:06}"``.
+
+  See `file properties`_ for list of keyword available for custom format.
+``--sort, --no-sort``
+  Sort files by name.
+``--header-format=<cat,table,CUSTOM_FORMAT>``
+  Listing header format. (default: based of list format)
+
+  * ``cat`` - As displayed by ``*CAT`` command.
+  * ``table`` - text table
+  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{title:12} {side}"``.
+
+  See `disk side properties`_ for list of keywords available for custom format.
+``--footer-format=CUSTOM_FORMAT``
+  Listing footer format.
+  See `disk side properties`_ for list of keywords available for custom format.
+``--image-header-format=CUSTOM_FORMAT``
+  Listing header common for entire image file.
+
+  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{image_basename} {tracks}"``.
+
+  See `image file properties`_ for list of keywords available for custom format.
+``--image-footer-format=CUSTOM_FORMAT``
+  Image Listing footer format.
+  See `image file properties`_ for list of keywords available for custom format.
+``--only-files``
+  Include only files in listing - useful mainly for JSON, XML and table format
+``--only-sides``
+  Include only disk sides in listing - useful mainly for JSON, XML and table
+  format
+``--only-images``
+  Include only disk images in listing - useful mainly for JSON, XML and table
+  format
 
 create
 ------
 
-  Create new floppy disk image or modify existing image.
+Create new floppy disk image or modify existing image.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage create [`global options`_] [`image modify options`_] [`image file options`_] IMAGE
-    dfsimage modify [`global options`_] [`image modify options`_] [`image file options`_] IMAGE
+  dfsimage create [`global options`_] [`image modify options`_] [`image file options`_] IMAGE
+  dfsimage modify [`global options`_] [`image modify options`_] [`image file options`_] IMAGE
 
-  **examples**::
+**examples**:
 
-    dfsimage create --new -D -L --title=Side1 --title=Side2 linear.img
-    dfsimage modify --existing image.ssd --bootopt=EXEC
+.. code-block:: sh
+
+  dfsimage create --new -D -L --title=Side1 --title=Side2 linear.img
+  dfsimage modify --existing image.ssd --bootopt=EXEC
 
 backup
 ------
 
-  Copy (and convert) image or one floppy side of image.
+Copy (and convert) image or one floppy side of image.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage backup [`global options`_] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE
-    dfsimage convert [`global options`_] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE
+  dfsimage backup [`global options`_] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE
+  dfsimage convert [`global options`_] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE
 
-  **examples**::
+**examples**:
 
-    dfsimage convert --from -D -L linear.img --to inter.dsd
-    dfsimage backup --from -2 dual.dsd --to side2.ssd
+.. code-block:: sh
+
+  dfsimage convert --from -D -L linear.img --to inter.dsd
+  dfsimage backup --from -2 dual.dsd --to side2.ssd
 
 import
 ------
 
-  Import files to floppy image.
+Import files to floppy image.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage import [`global options`_] [import options] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
+  dfsimage import [`global options`_] [import options] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
 
-  **import options**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --verbose_
-    --inf_
-    --replace_
-    --ignore-access_
-    --continue_
+  dfsimage import --new games.ssd --title="GAMES" files/*
+  dfsimage import floppy.dsd --replace --ignore-access --load-addr=FF1900 --exec-addr=FF8023 --locked --dfs-name=':2.$.MY_PROG' my_prog.bin
 
-  **examples**::
+**import options**:
 
-    dfsimage import --new newfloppy.ssd --title="New floppy" files/*
-    dfsimage import floppy.dsd --replace --ignore-access --load-addr=FF1900 --exec-addr=FF8023 --locked --dfs-name=':2.$.MY_PROG' my_prog.bin
+|verbose|_
+
+|inf|_
+
+|replace|_
+
+|ignore-access|_
+
+|continue|_
 
 export
 ------
 
-  Export files from floppy image.
+Export files from floppy image.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage export [`global options`_] [export options] -o OUTPUT ([`image file options`_] IMAGE)...
+  dfsimage export [`global options`_] [export options] -o OUTPUT ([`image file options`_] IMAGE)...
 
-  **required arguments**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --output_
+  dfsimage export floppy.ssd -o floppy/ -p 'A.*'
+  dfsimage export img/*.dsd --create-dir -o 'output/{image_basename}/{drive}.{fullname}'
 
-  **export options**:
+**required arguments**:
 
-  .. parsed-literal::
+``-o, --output=OUTPUT``
+  Output directory or file name formatting string for export.
+  Directory name must be terminated with path separator.
+  See `file properties`_ for list of keyword available for formatting string.
 
-    --pattern_
-    --verbose_
-    --create-dir_
-    --translation_
-    --include-drive-name_
-    --inf_
-    --replace_
-    --continue_
+**export options**:
 
-  **examples**::
+|pattern|_
 
-    dfsimage export floppy.ssd -o floppy/ -p 'A.*'
-    dfsimage export img/*.dsd --create-dir -o 'output/{image_basename}/{drive}.{fullname}'
+|verbose|_
+
+``--create-dir, --no-create-dir``
+  Create output directories as needed. (default: False)
+``--translation={standard,safe}``
+  Mode for translating dfs filename to host filename characters. (default:
+  standard)
+
+  * ``standard`` - replaces characters illegal on Windows with underscores.
+  * ``safe`` - replaces all characters, other than digits and letters with
+    underscores.
+``--include-drive-name``
+  Include drive name (i.e. :0. or :2.) in inf files created from double sided
+  floppy images. The resulting inf files will be incompatible with most
+  software. Use this option carefully.
+
+|inf|_
+
+|replace|_
+
+|continue|_
 
 dump
 ----
 
-  Dump file or sectors contents.
+Dump file or sectors contents.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage dump [`global options`_] [dump options] [`image file options`_] IMAGE FILE...
-    dfsimage read [`global options`_] [dump options] [`image file options`_] IMAGE FILE...
+  dfsimage dump [`global options`_] [dump options] [`image file options`_] IMAGE FILE...
+  dfsimage read [`global options`_] [dump options] [`image file options`_] IMAGE FILE...
 
-  **dump options**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --format__
-    --ellipsis_
-    --width_
-    --sector_
-    --track_
-    --all_
+  dfsimage dump image.ssd -f hex MY_PROG
+  dfsimage dump image.ssd -f raw --sector=0-1 > cat-sectors.bin
 
-__ format-opt_
+**dump options**:
 
-  **examples**::
+|format-opt|_
 
-    dfsimage dump image.ssd -f hex MY_PROG
-    dfsimage dump image.ssd -f raw --sector=0-1 > cat-sectors.bin
+``--ellipsis, --no-ellipsis``
+  Skip repeating lines in the hex dump. (default: True)
+``--width=WIDTH``
+  Bytes per line in the hex dump.
+
+|sector|_
+
+|track|_
+
+|all|_
 
 build
 -----
 
-  Write data to file or sectors.
+Write data to file or sectors.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage build [`global options`_] [build options] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
-    dfsimage write [`global options`_] [build options] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
+  dfsimage build [`global options`_] [build options] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
+  dfsimage write [`global options`_] [build options] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
 
-  **build options**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --format__
-    --replace_
-    --ignore-access_
-    --sector_
-    --track_
-    --all_
+  dfsimage list image.ssd | tr '\n' '\r' | dfsimage build image.ssd CATALOG
+  dfsimage write image.ssd --sector=0-1 < cat-sectors.bin
 
-__ format-opt_
+**build options**:
 
-  **examples**::
+|format-opt|_
 
-    dfsimage list image.ssd | tr '\n' '\r' | dfsimage build image.ssd CATALOG
-    dfsimage write image.ssd --sector=0-1 < cat-sectors.bin
+|replace|_
+
+|ignore-access|_
+
+|sector|_
+
+|track|_
+
+|all|_
 
 copy-over
 ---------
 
-  Copy files from one image to another.
+Copy files from one image to another.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage copy-over [`global options`_] [copy-over options] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE FILES...
+  dfsimage copy-over [`global options`_] [copy-over options] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE FILES...
 
-  **copy-over options**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --verbose_
-    --replace_
-    --ignore-access_
-    --preserve-attr_
-    --continue_
+  dfsimage copy-over --from image.ssd --to another.ssd '?.BLAG*'
 
-  **examples**::
+**copy-over options**:
 
-    dfsimage copy-over --from image.ssd --to another.ssd '?.BLAG*'
+|verbose|_
+
+|replace|_
+
+|ignore-access|_
+
+|preserve-attr|_
+
+|continue|_
 
 format
 ------
 
-  Format disk image removing all files.
+Format disk image removing all files.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage format [`global options`_] [`image modify options`_] [`image file options`_] IMAGE
+  dfsimage format [`global options`_] [`image modify options`_] [`image file options`_] IMAGE
 
-  **examples**::
+**examples**:
 
-    dfsimage format image.ssd --title 'Games'
+.. code-block:: sh
+
+  dfsimage format image.ssd --title 'Games'
 
 copy
 ----
 
-  Copy single file.
+Copy single file.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage copy [`global options`_] [copy options] [`image modify options`_] [`image file options`_] IMAGE FROM TO
+  dfsimage copy [`global options`_] [copy options] [`image modify options`_] [`image file options`_] IMAGE FROM TO
 
-  **copy options**:
+**copy options**:
 
-  .. parsed-literal::
+|replace|_
 
-    --replace_
-    --ignore-access_
-    --preserve-attr_
+|ignore-access|_
 
+|preserve-attr|_
 
 rename
 ------
 
-  Rename single file.
+Rename single file.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage rename [`global options`_] [rename options] [`image modify options`_] [`image file options`_] IMAGE FROM TO
+  dfsimage rename [`global options`_] [rename options] [`image modify options`_] [`image file options`_] IMAGE FROM TO
 
-  **rename options**:
+**rename options**:
 
-  .. parsed-literal::
+|replace|_
 
-    --replace_
-    --ignore-access_
+|ignore-access|_
 
 delete
 ------
 
-  Delete single file.
+Delete single file.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage delete [`global options`_] [delete options] [`image modify options`_] [`image file options`_] IMAGE FILE
+  dfsimage delete [`global options`_] [delete options] [`image modify options`_] [`image file options`_] IMAGE FILE
 
-  **delete options**:
+**delete options**:
 
-  .. parsed-literal::
+|ignore-access|_
 
-    --ignore-access_
-    --silent_
+``--silent``
+  Don't report error if the file to delete doesn't exist.
 
 destroy
 -------
 
-  Delete multiple files.
+Delete multiple files.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage destroy [`global options`_] [destroy options] [`image modify options`_] [`image file options`_] IMAGE FILES...
+  dfsimage destroy [`global options`_] [destroy options] [`image modify options`_] [`image file options`_] IMAGE FILES...
 
-  **destroy options**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --ignore-access_
+  dfsimage destroy image.ssd --ignore-access 'A.*' '!BOOT'
 
-  **examples**::
+**destroy options**:
 
-    dfsimage destroy image.ssd --ignore-access 'A.*' '!BOOT'
+|ignore-access|_
 
 lock
 ----
 
-  Lock files.
+Lock files.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage lock [`global options`_] [`image modify options`_] [`image file options`_] IMAGE FILES...
+  dfsimage lock [`global options`_] [`image modify options`_] [`image file options`_] IMAGE FILES...
 
 unlock
 ------
 
-  Unlock files.
+Unlock files.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage unlock [`global options`_] [`image modify options`_] [`image file options`_] IMAGE FILES...
+  dfsimage unlock [`global options`_] [`image modify options`_] [`image file options`_] IMAGE FILES...
 
 attrib
 ------
 
-  Change existing file attributes.
+Change existing file attributes.
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage attrib [`global options`_] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
+  dfsimage attrib [`global options`_] [`image modify options`_] [`image file options`_] IMAGE ([`file options`_] FILE)...
 
-  **examples**::
+**examples**:
 
-    dfsimage attrib image.ssd --locked --load-addr=FF1900 'B.*'
+.. code-block:: sh
+
+  dfsimage attrib image.ssd --locked --load-addr=FF1900 'B.*'
 
 digest
 ------
 
-  Display digest (hash) of file or sectors contents
+Display digest (hash) of file or sectors contents
 
-  **synopsis**:
+**synopsis**:
 
-  .. parsed-literal::
+.. parsed-literal::
 
-    dfsimage digest [`global options`_] [digest options] [`image file options`_] IMAGE FILE...
+  dfsimage digest [`global options`_] [digest options] [`image file options`_] IMAGE FILE...
 
-  **digest options**:
+**examples**:
 
-  .. parsed-literal::
+.. code-block:: sh
 
-    --name_
-    --mode_
-    --algorithm_
-    --sector_
-    --track_
-    --all_
+  dfsimage digest -a md5 image.ssd MY_PROG
+  dfsimage digest -n image.ssd '*.*'
+  dfsimage digest -nn --sector=0/0-0/1 image.ssd
 
-  **examples**::
+**digest options**:
 
-    dfsimage digest -a md5 image.ssd MY_PROG
-    dfsimage digest -n image.ssd '*.*'
-    dfsimage digest -nn --sector=0/0-0/1 image.ssd
+``-n, --name``
+  Display each file or object name. Repeat for image name.
+
+``-m, --mode=<all,used,file,data>``
+  Digest mode for file:
+
+  * ``all`` - include all attributes.
+  * ``file`` - include load and execution addresses, but not access mode.
+  * ``data`` - only file contents, don't include load and execution addresses
+    or access mode.
+
+  Digest mode for disk side:
+
+  * ``all`` - include all sectors.
+  * ``used`` - include used portions of catalog sectors and file sectors.
+  * ``file`` - files sorted alphabetically; Load and exec addresses are included
+    in the digest. File access mode and disk attributes are not included.
+
+``-a, --algorithm=ALGORITHM``
+  Digest algorithm, e.g. ``sha1``, ``sha256``, ``md5``
+
+|sector|_
+
+|track|_
+
+|all|_
 
 formatting keyword arguments
 ============================
