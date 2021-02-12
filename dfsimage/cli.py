@@ -4,6 +4,7 @@
 
 import os
 import sys
+import glob
 import codecs
 
 from typing import Dict, Optional, List, cast
@@ -240,6 +241,14 @@ class _MyHelpFormatAction(argparse.Action):
         parser.exit()
 
 
+def glob_or_keep(pathname: str) -> List[str]:
+    """Use globbing function on pathname, return original if nothing matches."""
+    result = glob.glob(pathname)
+    if len(result) == 0:
+        return [pathname]
+    return result
+
+
 class _AddImageAction(argparse.Action):
 
     def __init__(self, option_strings, dest, nargs=None, const=None,
@@ -300,6 +309,11 @@ class _AddImageAction(argparse.Action):
         open_mode = namespace.open_mode
         directory = namespace.directory
 
+        expanded_values = []
+        for pathname in values:
+            expanded_values.extend(glob_or_keep(pathname))
+        values = expanded_values
+
         for name in values:
             images.append({'name': name, 'tracks': tracks,
                            'sides': sides, 'side': side,
@@ -333,6 +347,11 @@ class _AddImportAction(argparse.Action):
         if files is None:
             files = []
             namespace.files = files
+
+        expanded_values = []
+        for pathname in values:
+            expanded_values.extend(glob_or_keep(pathname))
+        values = expanded_values
 
         if (load_addr is not None or exec_addr is not None
                 or locked is not None or dfs_name is not None):
@@ -693,7 +712,7 @@ def _digest_command(namespace, parser):
 
 
 class _ModifyProcess(_Process):
-    def __init__(self, namespace):
+    def __init__(self, namespace, _parser):
         super().__init__(namespace)
         self.save_option = (SIZE_OPTION_EXPAND if namespace.expand
                             else SIZE_OPTION_SHRINK if namespace.shrink
@@ -966,81 +985,81 @@ class _ModifyProcess(_Process):
                 self.run_image(image, params)
 
 
-def _create_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _create_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.run()
 
 
-def _format_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _format_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.command = proc._cmd_format
     proc.run()
 
 
 def _import_command(namespace, parser):
-    if namespace.files is None:
+    if namespace.files is None or len(namespace.files) == 0:
         parser.error("parameter FILE is required")
-    proc = _ModifyProcess(namespace)
+    proc = _ModifyProcess(namespace, parser)
     proc.command = proc._cmd_import
     proc.run()
 
 
-def _delete_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _delete_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.existing = True
     proc.command = proc._cmd_delete
     proc.run()
 
 
-def _lock_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _lock_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.existing = True
     proc.command = proc._cmd_lock
     proc.run()
 
 
-def _unlock_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _unlock_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.existing = True
     proc.command = proc._cmd_unlock
     proc.run()
 
 
-def _destroy_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _destroy_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.existing = True
     proc.command = proc._cmd_destroy
     proc.run()
 
 
-def _copy_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _copy_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.existing = True
     proc.command = proc._cmd_copy
     proc.run()
 
 
-def _rename_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _rename_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.existing = True
     proc.command = proc._cmd_rename
     proc.run()
 
 
-def _backup_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _backup_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.command = proc._cmd_backup
     proc.run()
 
 
-def _copyover_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _copyover_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.command = proc._cmd_copyover
     proc.run()
 
 
-def _attrib_command(namespace, _parser):
-    proc = _ModifyProcess(namespace)
+def _attrib_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
     proc.existing = True
     proc.command = proc._cmd_attrib
     proc.run()
@@ -1058,7 +1077,7 @@ def _build_command(namespace, parser):
             and namespace.track is None and namespace.sector is None
             and not namespace.all):
         parser.error("missing argument FILE")
-    proc = _ModifyProcess(namespace)
+    proc = _ModifyProcess(namespace, parser)
     proc.command = proc._cmd_build
     proc.run()
 

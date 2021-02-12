@@ -1649,7 +1649,7 @@ class Image:
 
         # Default to 80 tracks
         if tracks is None:
-            tracks = (DOUBLE_TRACKS if fsize <= SINGLE_TRACKS * SECTORS * SECTOR_SIZE * heads
+            tracks = (DOUBLE_TRACKS if fsize > SINGLE_TRACKS * TRACK_SIZE * heads
                       else cls._peek_number_of_tracks(fname))
 
         # Dual sided images with 'ssd' extension are linear by default

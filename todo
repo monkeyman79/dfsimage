@@ -1,5 +1,6 @@
-- setuptools
+- file name should be case insensitive
+- tests + code coverage
 - docs
 - mmap
 - mmb support
-- tests + code coverage
+- add silent to export and destroy, by default issue error if no file is matches pattern

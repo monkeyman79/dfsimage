@@ -914,7 +914,7 @@ class Side:
             print(xml_dumps(attrs, "side"), file=file)
 
         elif (fmt in (LIST_FORMAT_RAW, LIST_FORMAT_INFO, LIST_FORMAT_INF, LIST_FORMAT_TABLE)
-              or isinstance(fmt, str)):
+              or isinstance(fmt, str) and fmt != ''):
             for entry in entries:
                 print(entry.listing_entry(fmt), file=file)
 
