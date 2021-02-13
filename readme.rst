@@ -93,8 +93,8 @@ Build and install package
 Windows
 -------
 
-Before installing this package on a Windows machine, you have to ensure
-that both Python and Git are installed in your system.
+Before installing this package on a Windows machine, make sure that
+both Python and Git are installed on your system.
 
 * Python can be downloaded from here: https://www.python.org/downloads/
 * Git for Windows can be downloaded from here: https://gitforwindows.org/
