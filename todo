@@ -2,4 +2,3 @@
 - docs
 - mmap
 - mmb support
-- allow image.dsd:0 and image.dsd:2 instead of -1, -2

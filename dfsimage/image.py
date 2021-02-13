@@ -1743,9 +1743,9 @@ class Image:
         return fsize, heads, tracks, linear
 
     @classmethod
-    def _load(cls, filename: str, for_write: bool = False,
-              heads: int = None, tracks: int = None,
-              linear: bool = None, warning_mode: int = None) -> 'Image':
+    def _load(cls, filename: str, for_write: bool,
+              heads: Optional[int], tracks: Optional[int],
+              linear: Optional[bool], warning_mode: Optional[int]) -> 'Image':
         """Open file handle and load image file.
 
         Args:
@@ -1822,6 +1822,20 @@ class Image:
         return new_image
 
     @classmethod
+    def _open(cls, filename: str, for_write: bool, open_mode: int,
+              heads: Optional[int], tracks: Optional[int],
+              linear: Optional[bool], warning_mode: Optional[int]) -> 'Image':
+
+        if open_mode != OPEN_MODE_NEW:
+            try:
+                return cls._load(filename, for_write, heads, tracks, linear, warning_mode)
+            except FileNotFoundError:
+                if open_mode == OPEN_MODE_EXISTING or not for_write:
+                    raise
+
+        return cls.create(filename, heads, tracks, linear)
+
+    @classmethod
     def open(cls, filename: str, for_write: bool = False, open_mode: int = None,
              heads: int = None, tracks: int = None, linear: bool = None,
              warning_mode: int = None) -> 'Image':
@@ -1872,14 +1886,23 @@ class Image:
                 open_mode == OPEN_MODE_NEW and not for_write):
             raise ValueError("invalid open mode")
 
-        if open_mode != OPEN_MODE_NEW:
-            try:
-                return cls._load(filename, for_write, heads, tracks, linear, warning_mode)
-            except FileNotFoundError:
-                if open_mode == OPEN_MODE_EXISTING or not for_write:
-                    raise
+        default_side = None
+        if filename.endswith(':0') and not os.path.exists(filename):
+            default_side = 1
+            filename = filename[:-2]
+        elif filename.endswith(':2') and not os.path.exists(filename):
+            default_side = 2
+            filename = filename[:-2]
 
-        return cls.create(filename, heads, tracks, linear)
+        image = cls._open(filename, for_write, open_mode, heads, tracks, linear,
+                          warning_mode)
+        if default_side is not None:
+            try:
+                image.default_side = default_side
+            except:  # noqa: E722
+                image.close(False)
+                raise
+        return image
 
     def save(self, size_option: int = None) -> None:
         """Write image data back to file.

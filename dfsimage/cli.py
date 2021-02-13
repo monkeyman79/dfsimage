@@ -383,7 +383,11 @@ def _open_from_params(params, for_write, warn_mode, existing=False):
     image = Image.open(name, for_write, open_mode, sides, tracks, linear, warn_mode)
 
     try:
-        image.default_side = params["side"]
+        if image.default_side is not None:
+            if params["side"] is not None and params["side"] != image.default_side:
+                raise ValueError("conflicting sides specified")
+        else:
+            image.default_side = params["side"]
         image.current_dir = params["directory"]
     except:  # noqa: E722
         image.close()
