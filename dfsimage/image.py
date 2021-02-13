@@ -7,8 +7,6 @@ import itertools
 import fnmatch
 import re
 
-from re import Pattern
-
 from io import SEEK_SET
 
 from typing import List, Union, Optional
@@ -34,6 +32,7 @@ from .misc import DFSWarning
 
 from .conv import unicode_to_bbc, NAME_SAFE_TRANS, NAME_STD_TRANS
 
+from .pattern import ParsedPattern, PatternList, PatternUnion
 from .protocol import Property, ImageProtocol
 from .sectors import Sectors
 from .entry import Entry
@@ -146,7 +145,7 @@ class Image:
         elif self.heads != 1:
             self._default_head = None
 
-# pylint: disable=missing-function-docstring, no-self-use
+    # pylint: disable=missing-function-docstring, no-self-use
 
     @overload
     def get_side(self, head: None) -> Optional[Side]:
@@ -156,7 +155,7 @@ class Image:
     def get_side(self, head: int) -> Side:
         ...
 
-# pylint: enable=missing-function-docstring, no-self-use
+    # pylint: enable=missing-function-docstring, no-self-use
 
     def get_side(self, head: Optional[int] = None) -> Optional[Side]:
         """Get 'Side' object representing single side of a disk.
@@ -568,7 +567,7 @@ class Image:
         return track * SECTORS + sector
 
     @staticmethod
-    def sides_and_tracks_str(heads: int, tracks: int) -> str:
+    def _sides_and_tracks_str(heads: int, tracks: int) -> str:
         """Format string describing disk physical properties for error messages."""
         return "%d side%s %d tracks" % (heads,
                                         "" if heads == 1 else "s", tracks)
@@ -593,243 +592,6 @@ class Image:
         self.isvalid = isvalid
 
         return isvalid
-
-    def _get_heads_from_pattern(self, pattern: Union[str, List[str]] = None):
-        # List default sides, or sides mentioned in pattern(s)
-        if pattern is None:
-            pattern = []
-        elif isinstance(pattern, str):
-            pattern = [pattern]
-
-        # Get drive names from pattern
-        heads: Set[Optional[int]] = set((self.parse_name(pat, True)[2]
-                                         for pat in pattern))
-        # If pattern list is empty or contains pattern without drive name, add
-        # default side(s)
-        if len(heads) == 0 or None in heads:
-            heads.discard(None)
-            if self._default_head is not None:
-                heads.add(self._default_head)
-            else:
-                heads.update(set(range(0, self.heads)))
-        head_list = list(heads)
-        head_list.sort()
-        return head_list
-
-    PROPERTY_NAMES = {
-        "image_path": "Full path of the floppy disk image file.",
-        "image_filename": "File name of the floppy disk image file.",
-        "image_basename": "File name of the floppy disk image file without "
-                          "extension.",
-        "number_of_sides": "Number of floppy disk image sides.",
-        "tracks": "Number of tracks on each side.",
-        "size": "Current disk image size.",
-        "min_size": "Minimum disk image size to include last used sector.",
-        'max_size': "Maximum disk image size.",
-        "is_valid": "True if disk validation succeeded.",
-        "is_linear": "True if floppy disk image file has linear layout "
-                     "is single sided or is double sided ssd file.",
-        "sha1": "SHA1 digest of the entire disk image file."
-    }
-
-    def get_properties(self, for_format: bool, recurse: bool,
-                       level: int = 0,
-                       pattern: Union[str, List[str]] = None,
-                       sort: bool = False) -> Union[List, Dict[str, object]]:
-        """Get dictionary of all disk image properties.
-
-        Args:
-            for_format: If True, include additional redundant properties
-                suitable for custom listing format, but not needed
-                for dump.
-            recurse: If True, include list of sides and recursively list
-                of files with their properties in returned map.
-            level: Optional; If level is -1 skip disk image properties and
-                instead return list of sides with their properties. If level
-                is -2, return list of files.
-        Returns:
-            Dictionary of disk image properties.
-        """
-        self._not_closed()
-
-        if level >= 0:
-            attrs = {
-                'image_path': self.path,
-                'image_filename': self.filename,
-                'number_of_sides': self.heads,
-                'tracks': self.tracks,
-                'size': self.__get_size_for_save(SIZE_OPTION_KEEP),
-                'min_size': self.min_size,
-                "max_size": self.max_size,
-                "is_valid": self.isvalid,
-                "is_linear": self.linear,
-                "sha1": LazyString(cast(Property['Image', str],  # pylint: disable=no-member
-                                        Image.sha1).fget, self)
-                }
-            if not for_format:
-                attrs["sha1"] = str(attrs["sha1"])
-            if for_format:
-                attrs["image_basename"] = self.basename
-
-        if recurse or level < 0:
-            heads = self._get_heads_from_pattern(pattern)
-            side_list = [self.get_side(head)
-                         .get_properties(for_format=False, recurse=recurse,
-                                         level=level+1, pattern=pattern,
-                                         sort=sort)
-                         for head in heads]
-
-            if level == -2:
-                return [file for file_list in side_list for file in file_list]
-
-            if level < 0:
-                return side_list
-
-            attrs["sides"] = side_list
-
-        return attrs
-
-    def listing_header(self, fmt: Union[int, str] = None,
-                       file=sys.stdout) -> None:
-        """Print listing header line common for entire floppy image file.
-
-        See Image.PROPERTY_NAMES for list of available keys.
-
-        Args:
-            fmt: Selected format. The header is generated with str.format
-                function. Nothing is printed if this parameter is one on
-                LIST_FORMAT_.... constants other than LIST_FORMAT_TABLE.
-            file: Output stream. Default is sys.stdout.
-        Raises:
-            ValueError: Parameter 'fmt' is invalid.
-        """
-        self._not_closed()
-        if fmt is None or fmt == '':
-            return
-        if fmt == LIST_FORMAT_TABLE:
-            fmt = Image.TABLE_FORMAT
-        if isinstance(fmt, str):
-            attrs = self.get_properties(for_format=True, recurse=False)
-            print(fmt.format_map(cast(Dict[str, object], attrs)), file=file)
-        elif fmt not in (LIST_FORMAT_RAW, LIST_FORMAT_INFO,
-                         LIST_FORMAT_INF, LIST_FORMAT_CAT,
-                         LIST_FORMAT_JSON, LIST_FORMAT_XML):
-            raise ValueError("invalid listing format")
-
-    def listing(self, fmt: Union[int, str] = None,
-                pattern: Union[str, List[str]] = None,
-                side_header_fmt: Union[int, str] = None,
-                side_footer_fmt: Union[int, str] = None,
-                img_header_fmt: Union[int, str] = None,
-                img_footer_fmt: Union[int, str] = None,
-                sort: bool = None, file=sys.stdout) -> None:
-        """Print file listing for all (single or both) disk sides.
-
-        Print catalog listing using predefined format or custom
-        formatting strings.
-
-        Predefined formats are:
-            LIST_FORMAT_RAW (0)   - Lists file names, no header.
-            LIST_FORMAT_INFO (1)  - As displayed by *INFO command.
-            LIST_FORMAT_INF (2)   - As in .inf files.
-            LIST_FORMAT_CAT (3)   - As displayed by *CAT command.
-            LIST_FORMAT_JSON (4)  - Generate JSON
-            LIST_FORMAT_XML (5)   - Generate XML
-            LIST_FORMAT_TABLE (6) - Fixed-width text table.
-
-        For list of keys available for custom image header formatting string see
-        Image.PROPERTY_NAMES.
-
-        For list of keys available for custom side header formatting string see
-        Side.PROPERTY_NAMES.
-
-        For list of keys available for custom file entry formatting string see
-        Entry.PROPERTY_NAMES.
-
-        Args:
-            fmt: Optional; Selected file entry format. Value can be one of
-                LIST_FORMAT_... constants or custom formatting string.
-            pattern: Optional; List only files matching pattern (see Entry.match).
-            side_header_fmt: Optional; Selected side listing header format.
-                Value can be one of LIST_FORMAT_... constants or
-                custom formatting string. Default is `fmt` if it is one for
-                predefined formats, otherwise no header.
-            side_footer_fmt: Optional; Formatting string for side listing footer.
-                Default is no side listing footer.
-            img_header_fmt: Optional; Formatting string for image listing header.
-                Default ia no image header.
-            img_footer_fmt: Optional; Formatting string for image listing footer.
-                Default is no image footer.
-            sort: Optional; If this flag is True, displayed files are sorted
-                alphabetically. It is enabled by default for LIST_FORMAT_CAT format
-                and disabled for all other formats.
-            file: Output stream. Default is sys.stdout.
-        Raises:
-            ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
-        """
-        self._not_closed()
-        if img_header_fmt is None and not isinstance(fmt, str):
-            img_header_fmt = fmt
-        if img_header_fmt is not None and img_header_fmt != '':
-            self.listing_header(img_header_fmt, file=file)
-
-        if fmt == LIST_FORMAT_JSON:
-            attrs = self.get_properties(for_format=False, recurse=True,
-                                        pattern=pattern)
-            print(json_dumps(attrs), file=file)
-        elif fmt == LIST_FORMAT_XML:
-            attrs = self.get_properties(for_format=False, recurse=True,
-                                        pattern=pattern)
-            print(xml_dumps(attrs, "image"), file=file)
-        else:
-            heads = self._get_heads_from_pattern(pattern)
-            for head in heads:
-                self.get_side(head).listing(fmt, pattern,
-                                            header_fmt=side_header_fmt,
-                                            footer_fmt=side_footer_fmt,
-                                            sort=sort, file=file)
-
-        if img_footer_fmt is not None and img_footer_fmt != '':
-            self.listing_header(img_footer_fmt, file=file)
-
-    def cat(self, pattern: str = None, file=sys.stdout) -> None:
-        """Generate file listing as produced by *CAT command.
-
-        Args:
-            pattern: Optional; Only list files matching pattern (see Entry.match).
-            file: Output stream. Default is sys.stdout.
-        """
-        self.listing(LIST_FORMAT_CAT, pattern, file=file)
-
-    def info(self, pattern: str = None, file=sys.stdout) -> None:
-        """Generate file listing as produced by *INFO command.
-
-        Args:
-            pattern: Optional; Only list files matching pattern (see Entry.match).
-            file: Output stream. Default is sys.stdout.
-        """
-        self.listing(LIST_FORMAT_INFO, pattern, file=file)
-
-    def get_digest(self, algorithm: str = None) -> str:
-        """Generate hexadecimal digest of entire disk image file.
-
-        Args:
-            algorithm: Optional; Algorithm to use instead of the default SHA1.
-        Returns:
-            Hexadecimal digest string.
-        """
-        self._not_closed()
-        if algorithm is None:
-            algorithm = 'sha1'
-        size = self.__get_size_for_save()
-        data = self._data[0:self.original_size]
-        return hashlib.new(algorithm, data[:size],
-                           usedforsecurity=False).hexdigest()  # type: ignore[call-arg]
-
-    @property
-    def sha1(self) -> str:
-        """SHA1 digest of the entire disk image file."""
-        return self.get_digest()
 
     @staticmethod
     def _skip_first_letter(pattern: str) -> int:
@@ -906,8 +668,7 @@ class Image:
 
         return unicode_to_bbc(name), dirname, head
 
-    def parse_pattern(self, name: str) -> Tuple[
-            Pattern, Optional[Pattern], Optional[int]]:
+    def parse_pattern(self, name: str) -> ParsedPattern:
         """Parse filename pattern and convert to regular expression.
 
         Returns:
@@ -915,14 +676,287 @@ class Image:
         Raise:
             ValueError: drive name in pattern is invalid or not present.
         """
-        name, dirname, head = self.parse_name(name, True)
+        filename, dirname, head = self.parse_name(name, True)
 
-        f_pattern = (re.compile(fnmatch.translate(name), re.IGNORECASE)
+        f_pattern = (re.compile(fnmatch.translate(filename), re.IGNORECASE)
                      if name is not None else None)
         d_pattern = (re.compile(fnmatch.translate(dirname), re.IGNORECASE)
                      if dirname is not None else None)
 
-        return f_pattern, d_pattern, head
+        return ParsedPattern(f_pattern, d_pattern, head, name)
+
+    # pylint: disable=missing-function-docstring, no-self-use
+
+    @overload
+    def compile_pattern(self, pattern: None) -> None: ...
+
+    @overload
+    def compile_pattern(self, pattern: Union[
+        str, List[str], ParsedPattern, PatternList]) -> PatternList: ...
+
+    # pylint: disable=missing-function-docstring, no-self-use
+
+    def compile_pattern(self, pattern: PatternUnion) -> Optional[PatternList]:
+        """Convert pattern like object to PatternList."""
+
+        if pattern is None or isinstance(pattern, PatternList):
+            return pattern
+
+        if isinstance(pattern, ParsedPattern):
+            return PatternList([pattern])
+
+        if isinstance(pattern, str):
+            return PatternList([self.parse_pattern(pattern)])
+
+        return PatternList(list(self.parse_pattern(pat) for pat in pattern))
+
+    def _get_heads_from_pattern(self, pattern: PatternUnion = None):
+        # List default sides, or sides mentioned in pattern(s)
+        parsed = self.compile_pattern(pattern)
+
+        # Get drive names from pattern
+        if parsed is not None:
+            heads = set((pat.head for pat in parsed.patterns))
+        else:
+            heads = set()
+
+        # If pattern list is empty or contains pattern without drive name, add
+        # default side(s)
+        if len(heads) == 0 or None in heads:
+            heads.discard(None)
+            if self._default_head is not None:
+                heads.add(self._default_head)
+            else:
+                heads.update(set(range(0, self.heads)))
+        head_list = list(heads)
+        head_list.sort()
+        return head_list
+
+    PROPERTY_NAMES = {
+        "image_path": "Full path of the floppy disk image file.",
+        "image_filename": "File name of the floppy disk image file.",
+        "image_basename": "File name of the floppy disk image file without "
+                          "extension.",
+        "number_of_sides": "Number of floppy disk image sides.",
+        "tracks": "Number of tracks on each side.",
+        "size": "Current disk image size.",
+        "min_size": "Minimum disk image size to include last used sector.",
+        'max_size': "Maximum disk image size.",
+        "is_valid": "True if disk validation succeeded.",
+        "is_linear": "True if floppy disk image file has linear layout "
+                     "is single sided or is double sided ssd file.",
+        "sha1": "SHA1 digest of the entire disk image file."
+    }
+
+    def get_properties(self, for_format: bool, recurse: bool,
+                       level: int = 0,
+                       pattern: PatternUnion = None,
+                       sort=False, silent=False) -> Union[List, Dict[str, object]]:
+        """Get dictionary of all disk image properties.
+
+        Args:
+            for_format: If True, include additional redundant properties
+                suitable for custom listing format, but not needed
+                for dump.
+            recurse: If True, include list of sides and recursively list
+                of files with their properties in returned map.
+            level: Optional; If level is -1 skip disk image properties and
+                instead return list of sides with their properties. If level
+                is -2, return list of files.
+            pattern: Optional; Pattern for files included in recursive list
+            sort: Optional; Sort files by name
+            silent: Optional; Don't raise exception if a pattern doesn't match any file
+        Returns:
+            Dictionary of disk image properties.
+        """
+        self._not_closed()
+
+        if level >= 0:
+            attrs = {
+                'image_path': self.path,
+                'image_filename': self.filename,
+                'number_of_sides': self.heads,
+                'tracks': self.tracks,
+                'size': self.__get_size_for_save(SIZE_OPTION_KEEP),
+                'min_size': self.min_size,
+                "max_size": self.max_size,
+                "is_valid": self.isvalid,
+                "is_linear": self.linear,
+                "sha1": LazyString(cast(Property['Image', str],  # pylint: disable=no-member
+                                        Image.sha1).fget, self)
+                }
+            if not for_format:
+                attrs["sha1"] = str(attrs["sha1"])
+            if for_format:
+                attrs["image_basename"] = self.basename
+
+        if recurse or level < 0:
+            parsed = self.compile_pattern(pattern)
+            heads = self._get_heads_from_pattern(parsed)
+            side_list = [self.get_side(head)
+                         .get_properties(for_format=False, recurse=recurse,
+                                         level=level+1, pattern=parsed,
+                                         sort=sort, silent=True)
+                         for head in heads]
+            if not silent and parsed is not None:
+                parsed.ensure_matched()
+
+            if level == -2:
+                return [file for file_list in side_list for file in file_list]
+
+            if level < 0:
+                return side_list
+
+            attrs["sides"] = side_list
+
+        return attrs
+
+    def listing_header(self, fmt: Union[int, str] = None,
+                       file=sys.stdout) -> None:
+        """Print listing header line common for entire floppy image file.
+
+        See Image.PROPERTY_NAMES for list of available keys.
+
+        Args:
+            fmt: Selected format. The header is generated with str.format
+                function. Nothing is printed if this parameter is one on
+                LIST_FORMAT_.... constants other than LIST_FORMAT_TABLE.
+            file: Output stream. Default is sys.stdout.
+        Raises:
+            ValueError: Parameter 'fmt' is invalid.
+        """
+        self._not_closed()
+        if fmt is None or fmt == '':
+            return
+        if fmt == LIST_FORMAT_TABLE:
+            fmt = Image.TABLE_FORMAT
+        if isinstance(fmt, str):
+            attrs = self.get_properties(for_format=True, recurse=False)
+            print(fmt.format_map(cast(Dict[str, object], attrs)), file=file)
+        elif fmt not in (LIST_FORMAT_RAW, LIST_FORMAT_INFO,
+                         LIST_FORMAT_INF, LIST_FORMAT_CAT,
+                         LIST_FORMAT_JSON, LIST_FORMAT_XML):
+            raise ValueError("invalid listing format")
+
+    def listing(self, fmt: Union[int, str] = None,
+                pattern: PatternUnion = None,
+                side_header_fmt: Union[int, str] = None,
+                side_footer_fmt: Union[int, str] = None,
+                img_header_fmt: Union[int, str] = None,
+                img_footer_fmt: Union[int, str] = None,
+                sort: bool = None, silent=False, file=sys.stdout) -> None:
+        """Print file listing for all (single or both) disk sides.
+
+        Print catalog listing using predefined format or custom
+        formatting strings.
+
+        Predefined formats are:
+            LIST_FORMAT_RAW (0)   - Lists file names, no header.
+            LIST_FORMAT_INFO (1)  - As displayed by *INFO command.
+            LIST_FORMAT_INF (2)   - As in .inf files.
+            LIST_FORMAT_CAT (3)   - As displayed by *CAT command.
+            LIST_FORMAT_JSON (4)  - Generate JSON
+            LIST_FORMAT_XML (5)   - Generate XML
+            LIST_FORMAT_TABLE (6) - Fixed-width text table.
+
+        For list of keys available for custom image header formatting string see
+        Image.PROPERTY_NAMES.
+
+        For list of keys available for custom side header formatting string see
+        Side.PROPERTY_NAMES.
+
+        For list of keys available for custom file entry formatting string see
+        Entry.PROPERTY_NAMES.
+
+        Args:
+            fmt: Optional; Selected file entry format. Value can be one of
+                LIST_FORMAT_... constants or custom formatting string.
+            pattern: Optional; List only files matching pattern (see Entry.match).
+            side_header_fmt: Optional; Selected side listing header format.
+                Value can be one of LIST_FORMAT_... constants or
+                custom formatting string. Default is `fmt` if it is one for
+                predefined formats, otherwise no header.
+            side_footer_fmt: Optional; Formatting string for side listing footer.
+                Default is no side listing footer.
+            img_header_fmt: Optional; Formatting string for image listing header.
+                Default ia no image header.
+            img_footer_fmt: Optional; Formatting string for image listing footer.
+                Default is no image footer.
+            sort: Optional; If this flag is True, displayed files are sorted
+                alphabetically. It is enabled by default for LIST_FORMAT_CAT format
+                and disabled for all other formats.
+            silent: Optional; Don't raise exception if a pattern doesn't match any file
+            file: Output stream. Default is sys.stdout.
+        Raises:
+            ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
+        """
+        self._not_closed()
+        if img_header_fmt is None and not isinstance(fmt, str):
+            img_header_fmt = fmt
+        if img_header_fmt is not None and img_header_fmt != '':
+            self.listing_header(img_header_fmt, file=file)
+
+        parsed = self.compile_pattern(pattern)
+
+        if fmt == LIST_FORMAT_JSON:
+            attrs = self.get_properties(for_format=False, recurse=True,
+                                        pattern=parsed, sort=sort, silent=silent)
+            print(json_dumps(attrs), file=file)
+        elif fmt == LIST_FORMAT_XML:
+            attrs = self.get_properties(for_format=False, recurse=True,
+                                        pattern=parsed, sort=sort, silent=silent)
+            print(xml_dumps(attrs, "image"), file=file)
+        else:
+            heads = self._get_heads_from_pattern(parsed)
+            for head in heads:
+                self.get_side(head).listing(fmt, parsed,
+                                            header_fmt=side_header_fmt,
+                                            footer_fmt=side_footer_fmt,
+                                            sort=sort, silent=True, file=file)
+            if not silent and parsed is not None:
+                parsed.ensure_matched()
+
+        if img_footer_fmt is not None and img_footer_fmt != '':
+            self.listing_header(img_footer_fmt, file=file)
+
+    def cat(self, pattern: PatternUnion = None, silent=False, file=sys.stdout) -> None:
+        """Generate file listing as produced by *CAT command.
+
+        Args:
+            pattern: Optional; Only list files matching pattern (see Entry.match).
+            file: Output stream. Default is sys.stdout.
+        """
+        self.listing(LIST_FORMAT_CAT, pattern, silent=silent, file=file)
+
+    def info(self, pattern: PatternUnion = None, silent=False, file=sys.stdout) -> None:
+        """Generate file listing as produced by *INFO command.
+
+        Args:
+            pattern: Optional; Only list files matching pattern (see Entry.match).
+            file: Output stream. Default is sys.stdout.
+        """
+        self.listing(LIST_FORMAT_INFO, pattern, silent=silent, file=file)
+
+    def get_digest(self, algorithm: str = None) -> str:
+        """Generate hexadecimal digest of entire disk image file.
+
+        Args:
+            algorithm: Optional; Algorithm to use instead of the default SHA1.
+        Returns:
+            Hexadecimal digest string.
+        """
+        self._not_closed()
+        if algorithm is None:
+            algorithm = 'sha1'
+        size = self.__get_size_for_save()
+        data = self._data[0:self.original_size]
+        return hashlib.new(algorithm, data[:size],
+                           usedforsecurity=False).hexdigest()  # type: ignore[call-arg]
+
+    @property
+    def sha1(self) -> str:
+        """SHA1 digest of the entire disk image file."""
+        return self.get_digest()
 
     def to_fullname(self, filename: str,
                     head: int = None) -> Tuple[str, Optional[int]]:
@@ -987,25 +1021,30 @@ class Image:
                 found_entry = entry
         return found_entry
 
-    def get_files(self, pattern: Union[str, List[str]] = None,
-                  default_head: int = None) -> List[Entry]:
-        """List of file entries matching pattern."""
+    def get_files(self, pattern: PatternUnion = None,
+                  silent: bool = False, default_head: int = None) -> List[Entry]:
+        """List of file entries matching pattern.
+
+        Args:
+            pattern: Optional; Pattern or list of patterns to match
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            default_head: Optional; Default head number for file matching
+        """
         self._not_closed()
         if default_head is None:
             default_head = self._default_head
         if pattern is None:
-            return [file for side in self.sides
-                    if default_head is None or side.head == default_head
-                    for file in side.files]
+            return list(itertools.chain.from_iterable(
+                side.files for side in self.sides
+                if default_head is None or side.head == default_head))
 
-        parsed: List[Tuple[Pattern, Optional[Pattern], Optional[int]]]
-        if isinstance(pattern, str):
-            parsed = [self.parse_pattern(pattern)]
-        else:
-            parsed = list(self.parse_pattern(pat) for pat in pattern)
-        return [file for side in self.sides
-                for file in side.files
-                if file.match_parsed(parsed, default_head)]
+        parsed = self.compile_pattern(pattern)
+        files = [file for side in self.sides
+                 for file in side.files
+                 if file.match_parsed(parsed, default_head)]
+        if not silent:
+            parsed.ensure_matched()
+        return files
 
     def delete(self, filename: str, ignore_access=False, silent=False,
                default_head: int = None) -> bool:
@@ -1032,7 +1071,7 @@ class Image:
 
     def rename(self, from_name: str, to_name: str, replace=False,
                ignore_access=False, no_compact=False,
-               default_head: int = None) -> bool:
+               silent=False, default_head: int = None) -> bool:
         """Rename single file in floppy image.
 
         Args:
@@ -1041,20 +1080,22 @@ class Image:
             replace: Optional; Allow replacing existing files. Default is False.
             ignore_access: Optional; Allow replacing locked files. Default is
                 False.
-            silent: Optional; Don't raise exception if file doesn't exist.
-                Default is False.
             no_compact: Optional; Fail if there is no continuous block big
                 enough for the file when moving file between sides.
                 If 'no_compact' is not set, try to compact free
                 space. Default is False - i.e. try to compact free
                 space if needed.
+            silent: Optional; Don't raise exception if file doesn't exist.
+                Default is False.
             default_head: Default disk side.
         Returns:
             True if file was renamed, otherwise False.
         """
         from_entry = self.find_entry(from_name, default_head)
         if from_entry is None:
-            raise FileNotFoundError("file '%s' not found" % from_name)
+            if not silent:
+                raise FileNotFoundError("file '%s' not found" % from_name)
+            return False
 
         from_entry.side.check_valid()
 
@@ -1097,7 +1138,7 @@ class Image:
 
     def copy(self, from_name: str, to_name: str, replace=False,
              ignore_access=False, no_compact=False,
-             preserve_attr=False,
+             preserve_attr=False, silent=False,
              default_head: int = None) -> bool:
         """Copy single file in floppy image.
 
@@ -1112,13 +1153,17 @@ class Image:
                 space. Default is False - i.e. try to compact free
                 space if needed.
             preserve_attr: Optional; Preserve locked attribute on copied files.
+            silent: Optional; Don't raise exception if file doesn't exist.
+                Default is False.
             default_head: Default disk side.
         Returns:
             True if file was copied, otherwise False.
         """
         from_entry = self.find_entry(from_name, default_head)
         if from_entry is None:
-            raise FileNotFoundError("file '%s' not found" % from_name)
+            if not silent:
+                raise FileNotFoundError("file '%s' not found" % from_name)
+            return False
 
         from_entry.side.check_valid()
 
@@ -1151,15 +1196,16 @@ class Image:
                       default_head=to_head)
         return True
 
-    def destroy(self, pattern: Union[str, List[str]], ignore_access=False,
-                default_head: int = None) -> int:
+    def destroy(self, pattern: PatternUnion, ignore_access=False,
+                silent: bool = False, default_head: int = None) -> int:
         """Delete all files matching pattern.
 
         Args:
             pattern: Pattern or list or patterns.
             ignore_access: Optional; Allow deleting locked files. Default is
                 False.
-            default_head: Default disk side.
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            default_head: Optional; Default disk side.
         Return:
             Number of deleted files.
         """
@@ -1167,14 +1213,7 @@ class Image:
         if default_head is None:
             default_head = self._default_head
 
-        parsed: Optional[List[Tuple[Pattern, Optional[Pattern], Optional[int]]]]
-        if pattern is None:
-            parsed = None
-        elif isinstance(pattern, str):
-            parsed = [self.parse_pattern(pattern)]
-        else:
-            parsed = list(self.parse_pattern(pat) for pat in pattern)
-
+        parsed = self.compile_pattern(pattern)
         count = 0
         skipped = 0
         for side in self.sides:
@@ -1190,35 +1229,39 @@ class Image:
                         index += 1
                 else:
                     index += 1
+        if not silent and parsed is not None:
+            parsed.ensure_matched()
         if skipped != 0:
             warn(DFSWarning("%s: %d files not deleted"
                             % (self.filename, skipped)))
         return count
 
-    def lock(self, pattern: Union[str, List[str]],
+    def lock(self, pattern: PatternUnion, silent=False,
              default_head: int = None) -> int:
         """Lock all files matching pattern.
 
         Args:
             pattern: Pattern or list or patterns.
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
         """
         count = 0
-        for file in self.get_files(pattern, default_head):
+        for file in self.get_files(pattern, silent, default_head):
             if not file.locked:
                 count += 1
             file.locked = True
         return count
 
-    def unlock(self, pattern: Union[str, List[str]],
+    def unlock(self, pattern: PatternUnion, silent=False,
                default_head: int = None) -> int:
         """Unlock all files matching pattern.
 
         Args:
             pattern: Pattern or list or patterns.
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
         """
         self._not_closed()
         count = 0
-        for file in self.get_files(pattern, default_head):
+        for file in self.get_files(pattern, silent, default_head):
             if file.locked:
                 count += 1
             file.locked = False
@@ -1287,13 +1330,14 @@ class Image:
                      no_compact=False,
                      continue_on_error=True,
                      verbose=False,
+                     silent=False,
                      default_head: int = None) -> int:
         """Import files from host to floppy image.
 
         Args:
             os_files: List of files to import or single file name.
             dfs_names: Optional; List of DFS file names or single name. If
-                present must have the same number of elements as hostfiles
+                present must have the same number of elements as os_files
                 parameter.
             inf_mode: Optional; Inf files processing mode:
                 - INF_MODE_AUTO - read inf files if present;
@@ -1315,12 +1359,13 @@ class Image:
                 Default is False - i.e. try to compact free space if needed.
             continue_on_error: Optional; Continue on error.
             varbose: Optional; List files as they are being imported.
+            silent: Optional; Don't raise exception if a file is not found.
             default_head: Default disk side.
         """
         import_proc = _ImportFiles(self, os_files, dfs_names, inf_mode,
                                    load_addr, exec_addr, locked, replace,
                                    ignore_access, no_compact, continue_on_error,
-                                   verbose, default_head)
+                                   verbose, silent, default_head)
 
         return import_proc.run()
 
@@ -1358,12 +1403,12 @@ class Image:
         return translation, inf_mode, output
 
     def export_files(self, output: str,
-                     files: Union[str, List[str]] = None,
+                     files: PatternUnion = None,
                      create_directories=False,
                      translation: Union[int, bytes] = None,
                      inf_mode: int = None, include_drive=False,
                      replace=False, continue_on_error=True,
-                     verbose=False,
+                     verbose=False, silent=False,
                      default_head: int = None) -> int:
         """Export files from floppy image to host.
 
@@ -1374,11 +1419,11 @@ class Image:
                 is directory name, it should be terminated with path
                 separator (i.e. '/'). In that case dfs full file name
                 with be appended to the output path.
-            files: List of files or pattern for files to export.
+            files: Optional; List of files or pattern for files to export.
             create_directories: Optional; If True, output directories
                 will be automatically created as needed. Otherwise
                 this function will fail if output directory doesn't exist.
-            translation: Mode for translating dfs filename to host
+            translation: Optional; Mode for translating dfs filename to host
                 filename characters. Can be either ``TRANSLATION_STANDARD``,
                 which replaces characters illegal on Windows with underscore
                 character or ``TRANLATION_SAFE`` which replaces all characters,
@@ -1394,22 +1439,23 @@ class Image:
                 - INF_MODE_NEVER - never write inf files - file attributes are
                     not preserved.
                 Default is INF_MODE_ALWAYS.
-            include_drive: Include drive name (i.e. :0. or :2.) in inf
+            include_drive: Optional; Include drive name (i.e. :0. or :2.) in inf
                 files created from double sided floppy images. The resulting inf
                 files will be incompatible with most software. Use this option
                 with care.
-            replace: If file with the same name already exists in the output
+            replace: Optional; If file with the same name already exists in the output
                 directory, it will be replaced with new file. If this option is
                 False or not specified, this method will fail.
             continue_on_error: Optional; Continue on error.
             varbose: Optional; List files as they are being exported
-            default_head: Disk side. Overrides Image.default_side property.
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            default_head: Optional; Disk side. Overrides Image.default_side property.
                 If not present, files from both sides are exported.
         """
 
         export_proc = _ExportFiles(self, output, files, create_directories,
                                    translation, inf_mode, include_drive,
-                                   replace, continue_on_error, verbose,
+                                   replace, continue_on_error, verbose, silent,
                                    default_head)
         return export_proc.run()
 
@@ -1496,10 +1542,10 @@ class Image:
 
         self.validate()
 
-    def copy_over(self, source: 'Image', pattern: Union[str, List[str]],
+    def copy_over(self, source: 'Image', pattern: PatternUnion,
                   replace=False, ignore_access=False, no_compact=False,
                   change_dir=False, preserve_attr=False,
-                  continue_on_error=True, verbose=False,
+                  continue_on_error=True, verbose=False, silent=False,
                   default_head: int = None) -> int:
         """Copy files over from other image.
 
@@ -1515,6 +1561,7 @@ class Image:
             preserve_attr: Optional; Preserve locked attribute on copied files.
             continue_on_error: Optional; Continue on error.
             varbose: Optional; List files as they are being imported.
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
             default_head: Default target disk side.
         """
 
@@ -1525,7 +1572,7 @@ class Image:
 
         self._validate_copy_over(source, default_head)
 
-        files = source.get_files(pattern)
+        files = source.get_files(pattern, silent)
 
         for file in files:
 
@@ -1687,11 +1734,11 @@ class Image:
             if not linear:
                 if fsize < TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
                     raise RuntimeError("disk image too small for %s"
-                                       % Image.sides_and_tracks_str(heads, tracks))
+                                       % Image._sides_and_tracks_str(heads, tracks))
             else:
                 if fsize < tracks * TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
                     raise RuntimeError("disk image too small for linear %s"
-                                       % Image.sides_and_tracks_str(heads, tracks))
+                                       % Image._sides_and_tracks_str(heads, tracks))
 
         return fsize, heads, tracks, linear
 
@@ -1752,7 +1799,7 @@ class Image:
                 # Sanity check
                 if fsize > new_image.max_size:
                     raise RuntimeError("disk image too big for %s" %
-                                       Image.sides_and_tracks_str(heads, tracks))
+                                       Image._sides_and_tracks_str(heads, tracks))
 
                 # Validate the image
                 new_image.validate(warning_mode)
@@ -1896,7 +1943,8 @@ class _ImportFiles:
                  exec_addr: Optional[int], locked: Optional[bool],
                  replace: bool, ignore_access: bool,
                  no_compact: bool, continue_on_error: bool,
-                 verbose: bool, default_head: Optional[int]):
+                 verbose: bool, silent: bool,
+                 default_head: Optional[int]):
         image._not_closed()
 
         if default_head is None:
@@ -1929,6 +1977,7 @@ class _ImportFiles:
         self.no_compact = no_compact
         self.continue_on_error = continue_on_error
         self.verbose = verbose
+        self.silent = silent
         self.default_head: Optional[int] = default_head
         self.filelist: List[Dict] = []
 
@@ -1943,8 +1992,13 @@ class _ImportFiles:
             dfs_name = self.dfs_names[index] if self.dfs_names is not None else None
             basename = os.path.basename(file)
 
+            if not os.path.exists and self.silent:
+                index += 1
+                continue
+
             if os.path.isdir(file):
-                warn(DFSWarning("skipping directory '%s'" % file))
+                if not self.silent:
+                    warn(DFSWarning("skipping directory '%s'" % file))
                 index += 1
                 continue
 
@@ -2050,12 +2104,12 @@ class _ImportFiles:
 class _ExportFiles:
 
     def __init__(self, image: Image, output: str,
-                 files: Optional[Union[str, List[str]]],
+                 files: PatternUnion,
                  create_directories: bool,
                  translation: Optional[Union[int, bytes]],
                  inf_mode: Optional[int], include_drive: bool,
                  replace: bool, continue_on_error: bool,
-                 verbose: bool, default_head: Optional[int]):
+                 verbose: bool, silent: bool, default_head: Optional[int]):
         image._not_closed()
 
         if translation is None:
@@ -2097,6 +2151,7 @@ class _ExportFiles:
         self.replace = replace
         self.continue_on_error = continue_on_error
         self.verbose = verbose
+        self.silent = silent
         self.default_head = default_head
         self.inf_cache = InfCache()
         self.output_set: Set[str] = set()
@@ -2281,7 +2336,7 @@ class _ExportFiles:
 
     def run(self) -> int:
         """Run export process"""
-        entries = self.image.get_files(self.files, self.default_head)
+        entries = self.image.get_files(self.files, self.silent, self.default_head)
         count = 0
         skipped = 0
         for entry in entries:

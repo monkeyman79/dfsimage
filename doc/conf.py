@@ -22,7 +22,7 @@ copyright = '2021, Tadek Kijkowski'
 author = 'Tadek Kijkowski'
 
 # The full version, including alpha/beta/rc tags
-release = '0.9rc1'
+release = '0.9rc2'
 
 
 # -- General configuration ---------------------------------------------------

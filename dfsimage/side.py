@@ -23,6 +23,7 @@ from .misc import LazyString, ValidationWarning
 from .conv import bbc_to_unicode, unicode_to_bbc, from_bcd, to_bcd
 
 from .sectors import Sectors
+from .pattern import PatternUnion
 from .entry import Entry
 from .protocol import ImageProtocol, Property
 
@@ -494,7 +495,7 @@ class Side:
         """
         return self.image.backup(source, default_head=self.head)
 
-    def copy_over(self, source, pattern: Union[str, List[str]],
+    def copy_over(self, source, pattern: PatternUnion,
                   **kwargs) -> int:
         """Copy files over from other image.
 
@@ -503,62 +504,62 @@ class Side:
         return self.image.copy_over(source, pattern,
                                     default_head=self.head, **kwargs)
 
-    def delete(self, filename: str, **kwarg) -> bool:
+    def delete(self, filename: str, **kwargs) -> bool:
         """Delete single file from floppy disk image.
 
         See Image.delete
         """
         return self.image.delete(filename,
-                                 default_head=self.head, **kwarg)
+                                 default_head=self.head, **kwargs)
 
-    def rename(self, from_name: str, to_name: str, **kwarg) -> bool:
+    def rename(self, from_name: str, to_name: str, **kwargs) -> bool:
         """Rename single file in floppy image.
 
         See Image.rename
         """
         return self.image.rename(from_name, to_name,
-                                 default_head=self.head, **kwarg)
+                                 default_head=self.head, **kwargs)
 
-    def copy(self, from_name: str, to_name: str, **kwarg) -> bool:
+    def copy(self, from_name: str, to_name: str, **kwargs) -> bool:
         """Copy single file in floppy image.
 
         See Image.copy
         """
         return self.image.copy(from_name, to_name,
-                               default_head=self.head, **kwarg)
+                               default_head=self.head, **kwargs)
 
-    def destroy(self, pattern: Union[str, List[str]], **kwarg) -> int:
+    def destroy(self, pattern: PatternUnion, **kwargs) -> int:
         """Delete all files matching pattern.
 
         See Image.destroy
         """
         return self.image.destroy(pattern,
-                                  default_head=self.head, **kwarg)
+                                  default_head=self.head, **kwargs)
 
-    def lock(self, pattern: Union[str, List[str]]):
+    def lock(self, pattern: PatternUnion, **kwargs):
         """Lock all files matching pattern."""
-        return self.image.lock(pattern, default_head=self.head)
+        return self.image.lock(pattern, default_head=self.head, **kwargs)
 
-    def unlock(self, pattern: Union[str, List[str]]):
+    def unlock(self, pattern: PatternUnion, **kwarg):
         """Unlock all files matching pattern."""
-        return self.image.unlock(pattern, default_head=self.head)
+        return self.image.unlock(pattern, default_head=self.head, **kwarg)
 
     def add_file(self, filename: str, data: bytes,
-                 **kwarg) -> Entry:
+                 **kwargs) -> Entry:
         """Add new file to floppy disk image.
 
         See Image.add_file
         """
         return self.image.add_file(filename, data,
-                                   default_head=self.head, **kwarg)
+                                   default_head=self.head, **kwargs)
 
-    def import_files(self, hostfiles: Union[str, List[str]],
+    def import_files(self, os_files: Union[str, List[str]],
                      **kwargs) -> int:
         """Import files from host to floppy image.
 
         See Image.import_files
         """
-        return self.image.import_files(hostfiles,
+        return self.image.import_files(os_files,
                                        default_head=self.head, **kwargs)
 
     def export_files(self, output: str,
@@ -603,10 +604,23 @@ class Side:
             yield self.get_entry(index)
             index += 1
 
-    def get_files(self, pattern: Union[str, List[str]] = None) -> List[Entry]:
-        """List of file entries matching pattern."""
-        return [file for file in iter(self.files)
-                if file.match(pattern)]
+    def get_files(self, pattern: PatternUnion = None,
+                  silent: bool = False) -> List[Entry]:
+        """List of file entries matching pattern.
+
+        Args:
+            pattern: Optional; Pattern or list of patterns to match
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
+        """
+        if pattern is None:
+            return list(self.files)
+
+        parsed = self.image.compile_pattern(pattern)
+        files = [file for file in iter(self.files)
+                 if file.match_parsed(parsed, self.head)]
+        if not silent:
+            parsed.ensure_matched()
+        return files
 
     def __iter__(self) -> Generator[Entry, None, None]:
         return self.files
@@ -718,8 +732,8 @@ class Side:
         }
 
     def get_properties(self, for_format: bool, recurse: bool, level: int,
-                       pattern: Union[str, List[str]] = None,
-                       sort: bool = False) -> Union[List, Dict[str, object]]:
+                       pattern: PatternUnion = None,
+                       sort=False, silent=False) -> Union[List, Dict[str, object]]:
         """Get dictionary of all floppy side properties.
 
         Args:
@@ -731,6 +745,7 @@ class Side:
                 in properties dictionary. If level is -1, this function instead
                 return list of files with their properties.
             sort: Optional; Sort file list. Used when recurse is True or level is -1.
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
         Returns:
             Dictionary of floppy side properties or list of files properties.
         """
@@ -760,7 +775,7 @@ class Side:
 
         if recurse or level < 0:
             file_list = [file.get_properties(for_format=False, level=level+1)
-                         for file in self.get_files(pattern)]
+                         for file in self.get_files(pattern, silent)]
             if sort:
                 file_list.sort()
 
@@ -844,9 +859,10 @@ class Side:
             print(fname1, file=file)
             fname1 = None
 
-    def listing(self, fmt: Union[int, str] = None, pattern: Union[str, List[str]] = None,
+    def listing(self, fmt: Union[int, str] = None,
+                pattern: PatternUnion = None,
                 header_fmt: Union[int, str] = None, footer_fmt: Union[int, str] = None,
-                sort: bool = None, file=sys.stdout) -> None:
+                sort: bool = None, silent: bool = False, file=sys.stdout) -> None:
         """Print catalog listing.
 
         Print catalog listing using predefined format or custom
@@ -878,7 +894,8 @@ class Side:
             sort: Optional; If this flag is True, displayed files are sorted
                 alphabetically. It is enabled by default for LIST_FORMAT_CAT format
                 and disabled for all other formats.
-            file: Output stream. Default is sys.stdout.
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            file: Optional; Output stream. Default is sys.stdout.
         Raises:
             ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
         """
@@ -891,7 +908,7 @@ class Side:
 
         sort = (fmt == LIST_FORMAT_CAT) if sort is None else sort
 
-        entries = self.get_files(pattern)
+        entries = self.get_files(pattern, silent)
         if sort:
             entries.sort()
 
@@ -924,23 +941,25 @@ class Side:
         if footer_fmt is not None and footer_fmt != '':
             self.listing_header(footer_fmt, file=file)
 
-    def cat(self, pattern: str = None, file=sys.stdout) -> None:
+    def cat(self, pattern: PatternUnion = None, silent: bool = False, file=sys.stdout) -> None:
         """Generate file listing as produced by *CAT command.
 
         Args:
             pattern: Optional; Only list files matching pattern (see Entry.match).
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
             file: Output stream. Default is sys.stdout.
         """
-        self.listing(LIST_FORMAT_CAT, pattern, file=file)
+        self.listing(LIST_FORMAT_CAT, pattern, silent=silent, file=file)
 
-    def info(self, pattern: str = None, file=sys.stdout) -> None:
+    def info(self, pattern: PatternUnion = None, silent: bool = False, file=sys.stdout) -> None:
         """Generate file listing as produced by *INFO command.
 
         Args:
             pattern: Optional; Only list files matching pattern (see Entry.match).
+            silent: Optional; Don't raise exception if pattern doesn't match any file.
             file: Output stream. Default is sys.stdout.
         """
-        self.listing(LIST_FORMAT_INFO, pattern, file=file)
+        self.listing(LIST_FORMAT_INFO, pattern, silent=silent, file=file)
 
     @staticmethod
     def boot_opt_to_str(boot_opt: int) -> str:

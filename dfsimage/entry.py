@@ -2,9 +2,8 @@
 
 import sys
 import hashlib
-from typing import Optional, Union, Sequence, List, Dict, Tuple
+from typing import Optional, Union, Sequence, Dict
 from typing import cast
-from re import Pattern
 
 from .simplewarn import warn
 from .consts import SECTOR_SIZE, CATALOG_SECTORS
@@ -14,6 +13,7 @@ from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
 from .misc import bchr, ValidationWarning, LazyString, json_dumps, xml_dumps
 from .conv import bbc_to_unicode, unicode_to_bbc
 
+from .pattern import ParsedPattern, PatternList, PatternUnion
 from .sectors import Sectors
 from .inf import Inf
 from .protocol import SideProtocol, Property
@@ -73,7 +73,7 @@ class Entry:
         Returns:
             A boolean indicating if the character is valid.
         """
-        return 23 <= char < 127
+        return 32 <= char < 127
 
     @property
     def directory_bytes(self) -> bytes:
@@ -687,25 +687,22 @@ class Entry:
             return self.sorting_string < other.sorting_string
         return NotImplemented
 
-    def _match(self, parsed_pattern: Tuple[Pattern, Optional[Pattern], Optional[int]],
+    def _match(self, pattern: ParsedPattern,
                default_head: int = None) -> bool:
 
-        # Split fullname to drive, directory and name
-        f_pat, d_pat, head = parsed_pattern
-
         # If drive is present in name, it must match this side
-        if head is not None:
-            if head != self.head:
+        if pattern.head is not None:
+            if pattern.head != self.head:
                 return False
         # If drive is not present in name, this side must be default
         elif default_head is not None:
             if default_head != self.head:
                 return False
 
-        # If directory is not emptry, is must match this file
+        # If directory is not empty, is must match this file
         directory = self.__get_directory(True)
-        if d_pat is not None:
-            if d_pat.match(directory) is None:
+        if pattern.dirname is not None:
+            if pattern.dirname.match(directory) is None:
                 return False
 
         # Otherwise this file must be in default directory
@@ -713,20 +710,22 @@ class Entry:
             if self.directory != unicode_to_bbc(self.side.image.current_dir):
                 return False
 
-        return f_pat.match(self.__get_filename(True)) is not None
+        if pattern.filename.match(self.__get_filename(True)) is None:
+            return False
+
+        pattern.match_count += 1
+        return True
 
     def match_parsed(self,
-                     parsed_patterns: Optional[List[Tuple[
-                         Pattern, Optional[Pattern], Optional[int]]]],
+                     parsed_patterns: Optional[PatternList],
                      default_head: int = None) -> bool:
         """Test whether the entry matches any on the parsed pattern list."""
         if parsed_patterns is None:
-            if default_head is not None and default_head != self.head:
-                return False
-            return True
-        return any(self._match(parsed, default_head) for parsed in parsed_patterns)
+            return default_head is None or default_head == self.head
+        return sum(self._match(parsed, default_head)
+                   for parsed in parsed_patterns.patterns) != 0
 
-    def match(self, pattern: Union[str, List[str]] = None,
+    def match(self, pattern: PatternUnion = None,
               default_head: int = None) -> bool:
         """Test whether the entry filename matches the 'pattern' string.
 
@@ -740,16 +739,7 @@ class Entry:
         if pattern is None:
             return default_head is None or default_head == self.head
 
-        if isinstance(pattern, str):
-            parsed = self.side.image.parse_pattern(pattern)
-            return self._match(parsed, default_head)
-
-        for pat in pattern:
-            parsed = self.side.image.parse_pattern(pat)
-            if self._match(parsed, default_head):
-                return True
-
-        return False
+        return self.match_parsed(self.side.image.compile_pattern(pattern))
 
     @staticmethod
     def get_word(buffer: memoryview) -> int:

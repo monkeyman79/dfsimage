@@ -1,6 +1,5 @@
-- file name should be case insensitive
 - tests + code coverage
 - docs
 - mmap
 - mmb support
-- add silent to export and destroy, by default issue error if no file is matches pattern
+- allow image.dsd:0 and image.dsd:2 instead of -1, -2

@@ -4,11 +4,12 @@
 # pylint: disable = invalid-name
 # pylint: disable = multiple-statements
 
-from re import Pattern
 from typing import Protocol, Callable, TypeVar, Tuple, Optional
 from typing import Union, List
+from typing import overload
 
 from .sectors import Sectors
+from .pattern import ParsedPattern, PatternList, PatternUnion
 
 C_co = TypeVar('C_co', covariant=True)  # pylint: disable = invalid-name
 T = TypeVar('T')  # pylint: disable = invalid-name
@@ -35,11 +36,19 @@ class ImageProtocol(Protocol):
     current_dir: str
     default_side: int
 
-    def parse_pattern(self, name: str) -> Tuple[
-        Pattern, Optional[Pattern], Optional[int]]: ...
-
     def parse_name(self, name: str, is_pattern: bool) -> Tuple[
         str, Optional[str], Optional[int]]: ...
+
+    def parse_pattern(self, name: str) -> ParsedPattern: ...
+
+    @overload
+    def compile_pattern(self, pattern: None) -> None: ...
+
+    @overload
+    def compile_pattern(self, pattern: Union[
+        str, List[str], ParsedPattern, PatternList]) -> PatternList: ...
+
+    def compile_pattern(self, pattern: PatternUnion) -> Optional[PatternList]: ...
 
     def to_fullname(self, filename: str,
                     head: int = None) -> Tuple[str, Optional[int]]: ...
@@ -65,48 +74,48 @@ class ImageProtocol(Protocol):
                default_head: int = None) -> bool: ...
 
     def rename(self, from_name: str, to_name: str, replace=False,
-               ignore_access=False, no_compact=False,
+               ignore_access=False, no_compact=False, silent=False,
                default_head: int = None) -> bool: ...
 
     def copy(self, from_name: str, to_name: str, replace=False,
              ignore_access=False, no_compact=False,
-             preserve_attr=False,
+             preserve_attr=False, silent=False,
              default_head: int = None) -> bool: ...
 
-    def destroy(self, pattern: Union[str, List[str]], ignore_access=False,
-                default_head: int = None) -> int: ...
+    def destroy(self, pattern: PatternUnion, ignore_access=False,
+                silent=False, default_head: int = None) -> int: ...
 
-    def lock(self, pattern: Union[str, List[str]],
+    def lock(self, pattern: PatternUnion, silent=False,
              default_head: int = None) -> int: ...
 
-    def unlock(self, pattern: Union[str, List[str]],
+    def unlock(self, pattern: PatternUnion, silent=False,
                default_head: int = None) -> int: ...
 
-    def import_files(self, hostfiles: Union[str, List[str]],
+    def import_files(self, os_files: Union[str, List[str]],
                      dfs_names: Union[str, List[str]] = None,
                      inf_mode: int = None,
                      load_addr: int = None, exec_addr: int = None,
                      locked: bool = None,
                      replace=False, ignore_access=False,
                      no_compact=False, continue_on_error=False,
-                     verbose=False,
+                     verbose=False, silent=False,
                      default_head: int = None) -> int: ...
 
     def export_files(self, output: str,
-                     files: Union[str, List[str]] = None,
+                     files: PatternUnion = None,
                      create_directories=False,
                      translation: Union[int, bytes] = None,
                      inf_mode: int = None, include_drive=False,
                      replace=False, continue_on_error=False,
-                     verbose=False,
+                     verbose=False, silent=False,
                      default_head: int = None) -> int: ...
 
     def backup(self, source, default_head: int = None): ...
 
-    def copy_over(self, source, pattern: Union[str, List[str]],
+    def copy_over(self, source, pattern: PatternUnion,
                   replace=False, ignore_access=False, no_compact=False,
                   change_dir=False, preserve_attr=False,
-                  continue_on_error=False, verbose=False,
+                  continue_on_error=False, verbose=False, silent=False,
                   default_head: int = None) -> int: ...
 
 

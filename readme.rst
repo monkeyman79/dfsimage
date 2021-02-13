@@ -207,6 +207,15 @@ global options
   * ``first`` - Display first warning and skip further validation
   * ``all`` - Display all validation warning. Some warnings may be redundant.
 
+``-v, --verbose``
+  Verbose mode - list copied files.
+``-q, --quiet``
+  Quiet mode - don't report successful operations.
+``-s, --silent``
+  Don't generate error if a file doesn't exist.
+``--continue, --no-continue``
+  Continue on non-fatal errors. (default: True)
+
 common command options
 ------------------------
 
@@ -224,14 +233,6 @@ common command options
   * pattern ``'[!seq]'`` matches any character not in `seq`.
 
   Commands: list_, export_
-
-.. |verbose| replace:: ``-v, --verbose``
-.. _verbose:
-
-|verbose|
-  Verbose mode - list copied files.
-
-  Commands: import_, export_, copy-over_
 
 .. |inf| replace:: ``--inf={always,auto,never}``
 .. _inf:
@@ -271,14 +272,6 @@ common command options
   Preserve ``'locked'`` attribute on copying. (default: False)
 
   Commands: copy-over_, copy_
-
-.. |continue| replace:: ``--continue, --no-continue``
-.. _continue:
-
-|continue|
-  Continue on non-fatal errors. (default: True)
-
-  Commands: import_, export_, copy-over_
 
 .. |format-opt| replace:: ``-f, --format={raw,ascii,hex}``
 .. _format-opt:
@@ -529,15 +522,11 @@ Import files to floppy image.
 
 **import options**:
 
-|verbose|_
-
 |inf|_
 
 |replace|_
 
 |ignore-access|_
-
-|continue|_
 
 export
 ------
@@ -568,8 +557,6 @@ Export files from floppy image.
 
 |pattern|_
 
-|verbose|_
-
 ``--create-dir, --no-create-dir``
   Create output directories as needed. (default: False)
 ``--translation={standard,safe}``
@@ -587,8 +574,6 @@ Export files from floppy image.
 |inf|_
 
 |replace|_
-
-|continue|_
 
 dump
 ----
@@ -676,15 +661,11 @@ Copy files from one image to another.
 
 **copy-over options**:
 
-|verbose|_
-
 |replace|_
 
 |ignore-access|_
 
 |preserve-attr|_
-
-|continue|_
 
 format
 ------
@@ -753,9 +734,6 @@ Delete single file.
 **delete options**:
 
 |ignore-access|_
-
-``--silent``
-  Don't report error if the file to delete doesn't exist.
 
 destroy
 -------

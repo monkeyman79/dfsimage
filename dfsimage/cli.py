@@ -424,7 +424,9 @@ class _Process:
         else:
             self.warn_mode = None
         self.cont = getattr(namespace, "cont", None)
-        self.verbose = getattr(namespace, "verbose", None)
+        self.verbose = (getattr(namespace, "verbose", 0)
+                        + 1 - getattr(namespace, "quiet", 0))
+        self.silent = getattr(namespace, "silent", None)
 
     @staticmethod
     def get_sector_number(image, sector):
@@ -497,16 +499,18 @@ class _ListProcess(_Process):
                 self.tree.extend(prop)
             elif self.only_files:
                 prop = image.get_properties(for_format=False, recurse=False, level=-2,
-                                            pattern=self.pattern, sort=self.sort)
+                                            pattern=self.pattern, sort=self.sort,
+                                            silent=self.silent)
                 self.tree.extend(prop)
             else:
                 prop = image.get_properties(for_format=False, recurse=True,
-                                            pattern=self.pattern, sort=self.sort)
+                                            pattern=self.pattern, sort=self.sort,
+                                            silent=self.silent)
                 self.tree.append(prop)
         else:
             image.listing(fmt=self.fmt, pattern=self.pattern, side_header_fmt=self.header_fmt,
                           side_footer_fmt=self.footer_fmt, img_header_fmt=self.img_header_fmt,
-                          img_footer_fmt=self.img_footer_fmt, sort=self.sort)
+                          img_footer_fmt=self.img_footer_fmt, sort=self.sort, silent=self.silent)
 
     def run_listing(self):
         """Run listing."""
@@ -594,7 +598,7 @@ class _DumpProcess(_Process):
 
     def _dump_files(self, image: Image):
         for file_pat in self.files:
-            for file in image.get_files(file_pat):
+            for file in image.get_files(file_pat, silent=self.silent):
                 if not self.digest:
                     self.dump(file.readall())
                 else:
@@ -732,7 +736,6 @@ class _ModifyProcess(_Process):
                 self.inf_mode = INF_MODE_NEVER
         self.no_compact = True if self.compact is False else None
         self.ignore_access = getattr(namespace, "ignore_access", None)
-        self.silent = getattr(namespace, "silent", False)
         self.replace = getattr(namespace, "replace", None)
         self.file = getattr(namespace, "file", None)
         self.files = getattr(namespace, "files", None)
@@ -796,8 +799,9 @@ class _ModifyProcess(_Process):
                 exec_addr=exec_addr, locked=locked,
                 replace=self.replace, ignore_access=self.ignore_access,
                 no_compact=self.no_compact, continue_on_error=self.cont,
-                verbose=self.verbose)
-        print("%s: %d files imported" % (image.filename, count))
+                verbose=(self.verbose > 1), silent=self.silent)
+        if self.verbose:
+            print("%s: %d files imported" % (image.filename, count))
 
     def _read_stdin(self) -> bytes:
         if self.dump_format == "raw":
@@ -892,7 +896,7 @@ class _ModifyProcess(_Process):
             load_addr = fileset["load_addr"]
             exec_addr = fileset["exec_addr"]
             locked = fileset["locked"]
-            entries = image.get_files(patterns)
+            entries = image.get_files(patterns, silent=self.silent)
             count += len(entries)
             for entry in entries:
                 if load_addr is not None:
@@ -901,47 +905,61 @@ class _ModifyProcess(_Process):
                     entry.exec_address = exec_addr
                 if locked is not None:
                     entry.locked = locked
-        print("%s: %d files changed" % (image.filename, count))
+        if self.verbose:
+            print("%s: %d files changed" % (image.filename, count))
 
     def _cmd_format(self, image: Image):  # pylint: disable=no-self-use
         image.format()
+        if self.verbose:
+            print("%s: formatted", image.filename)
 
     def _cmd_delete(self, image: Image):
         if image.delete(filename=self.file,
                         ignore_access=self.ignore_access,
                         silent=self.silent):
-            print("%s: file deleted" % image.filename)
+            if self.verbose:
+                print("%s: file '%s' deleted" % (image.filename, self.file))
 
     def _cmd_destroy(self, image: Image):
         count = image.destroy(pattern=self.files,
-                              ignore_access=self.ignore_access)
-        print("%s: %d files deleted" % (image.filename, count))
+                              ignore_access=self.ignore_access,
+                              silent=self.silent)
+        if self.verbose:
+            print("%s: %d files deleted" % (image.filename, count))
 
     def _cmd_lock(self, image: Image):
-        count = image.lock(pattern=self.files)
-        print("%s: %d files locked" % (image.filename, count))
+        count = image.lock(pattern=self.files, silent=self.silent)
+        if self.verbose:
+            print("%s: %d files locked" % (image.filename, count))
 
     def _cmd_unlock(self, image: Image):
-        count = image.unlock(pattern=self.files)
-        print("%s: %d files unlocked" % (image.filename, count))
+        count = image.unlock(pattern=self.files, silent=self.silent)
+        if self.verbose:
+            print("%s: %d files unlocked" % (image.filename, count))
 
     def _cmd_rename(self, image: Image):
         if image.rename(from_name=self.oldname, to_name=self.newname,
                         replace=self.replace, ignore_access=self.ignore_access,
-                        no_compact=self.no_compact):
-            print("%s: file renamed" % (image.filename))
+                        no_compact=self.no_compact, silent=self.silent):
+            if self.verbose:
+                print("%s: file '%s' renamed to '%s'"
+                      % (image.filename, self.oldname, self.newname))
 
     def _cmd_copy(self, image: Image):
         if image.copy(from_name=self.oldname, to_name=self.newname,
                       replace=self.replace, ignore_access=self.ignore_access,
                       no_compact=self.no_compact,
-                      preserve_attr=self.preserve_locked):
-            print("%s: file copied" % (image.filename))
+                      preserve_attr=self.preserve_locked, silent=self.silent):
+            if self.verbose:
+                print("%s: file '%s' copied to '%s'"
+                      % (image.filename, self.oldname, self.newname))
 
     def _cmd_backup(self, image: Image):
         with _open_from_params(self.from_image[0], for_write=False,
                                warn_mode=self.warn_mode) as src_image:
             image.backup(source=src_image)
+            if self.verbose:
+                print("%s: backup from %s", image.filename, src_image.filename)
 
     def _cmd_copyover(self, image: Image):
         with _open_from_params(self.from_image[0], for_write=False,
@@ -953,8 +971,11 @@ class _ModifyProcess(_Process):
                                     change_dir=self.directory is not None,
                                     preserve_attr=self.preserve_locked,
                                     continue_on_error=self.cont,
-                                    verbose=self.verbose)
-        print("%s: %d files copied" % (image.filename, count))
+                                    verbose=(self.verbose > 1),
+                                    silent=self.silent)
+            if self.verbose:
+                print("%s: %d files copied from %s"
+                      % (image.filename, count, src_image.filename))
 
     def run_image(self, image: Image, params: Dict) -> None:
         """Apply operations to single image file."""
@@ -1116,8 +1137,10 @@ class _ExportProcess(_Process):
             include_drive=self.include_drive,
             replace=self.replace,
             continue_on_error=self.cont,
-            verbose=self.verbose)
-        print("%s: %d files exported" % (image.filename, count))
+            verbose=(self.verbose > 1),
+            silent=self.silent)
+        if self.verbose:
+            print("%s: %d files exported" % (image.filename, count))
 
     def run(self):
         """Run export on all images."""
@@ -1165,6 +1188,14 @@ def _add_global_options(parser, subparser=True, template=False):
         add('--warn', choices=['none', 'first', 'all'],
             help=WARN_LONG_HELP if template else WARN_HELP,
             dest='warn_mode')
+        add('-v', '--verbose', action='count',
+            help='Verbose mode - list copied files.', default=0)
+        add('-q', '--quiet', action='count',
+            help='Quiet mode - don\'t report successful operations.', default=0)
+        add('--continue', dest='cont', help='Continue on non-fatal errors.',
+            action=argparse.BooleanOptionalAction, default=True)  # pylint: disable=no-member
+        add('-s', '--silent', action='store_true',
+            help="Don't generate error if a file doesn't exist.")
 
 
 PATTERN_HELP = "File name or pattern for listing."
@@ -1370,12 +1401,6 @@ def _add_command_options(parser, command, opts=None):
         add('-p', '--pattern', help='File name or pattern for export.',
             nargs=1, action='extend', default=[])
 
-    if command in ("import", "export", "copy-over", "command"):
-        add('-v', '--verbose', action='store_true',
-            help='Verbose mode - list copied files.')
-        add('--continue', dest='cont', help='Continue on non-fatal errors.',
-            action=argparse.BooleanOptionalAction, default=True)  # pylint: disable=no-member
-
     if command in ("export", "command"):
         add('--create-dir', action=argparse.BooleanOptionalAction,  # pylint: disable=no-member
             help="Create output directories as needed.", default=False)
@@ -1399,10 +1424,6 @@ def _add_command_options(parser, command, opts=None):
                    "import", "copy-over", "command"):
         add('--ignore-access', action=argparse.BooleanOptionalAction,  # pylint: disable=no-member
             help="Allow deleting or replacing locked files.", default=False)
-
-    if command in ("delete", "command"):
-        add('--silent', action='store_true',
-            help="Don't report error if the file to delete doesn't exist.")
 
     if command in ("copy", "copy-over", "command"):
         default = (command == "copy-over")
@@ -1551,14 +1572,14 @@ IMPORT_EPILOG = """examples:
   dfsimage import --new newfloppy.ssd --title="New floppy" files/*
 
   dfsimage import floppy.dsd --replace --ignore-access --load-addr=FF1900 --exec-addr=FF8023 \
-      --locked --dfs-name=':2.$.MY_PROG' my_prog.bin
+      --locked --dfs-name=":2.$.MY_PROG" my_prog.bin
 """
 
 EXPORT_USAGE = ('%(prog)s [global options] [export options] -o OUTPUT '
                 '([image file options] IMAGE)...')
 
 EXPORT_EPILOG = """examples:
-  dfsimage export floppy.ssd -o floppy/ -p 'A.*'
+  dfsimage export floppy.ssd -o floppy/ -p "A.*"
 
   dfsimage export img/*.dsd --create-dir -o 'output/{image_basename}/{drive}.{fullname}'
 """
@@ -1587,18 +1608,18 @@ COPYOVER_USAGE = ('%(prog)s [global options] [copy-over options] [image modify o
                   '--from [image file options] FROM_IMAGE --to [image file options] TO_IMAGE '
                   'FILES...')
 COPYOVER_EPILOG = """examples:
-  dfsimage copy-over --from image.ssd --to another.ssd '?.BLAG*'
+  dfsimage copy-over --from image.ssd --to another.ssd "?.BLAG*"
 """
 
 FORMAT_EPILOG = """examples:
-  dfsimage format image.ssd --title 'Games'
+  dfsimage format image.ssd --title "Games"
 """
 
 DESTROY_USAGE = ('%(prog)s [global options] [destroy options] [image modify options] '
                  '[image file options] IMAGE FILES...')
 
 DESTROY_EPILOG = """examples:
-  dfsimage destroy image.ssd --ignore-access 'A.*' '!BOOT'
+  dfsimage destroy image.ssd --ignore-access "A.*" "!BOOT"
 """
 
 LOCK_USAGE = "%(prog)s [global options] [image modify options] [image file options] IMAGE FILES..."
@@ -1607,7 +1628,7 @@ ATTRIB_USAGE = ("%(prog)s [global options] [image modify options] [image file op
                 "IMAGE ([file options] FILE)...")
 
 ATTRIB_EPILOG = """examples:
-  dfsimage attrib image.ssd --locked --load-addr=FF1900 'B.*'
+  dfsimage attrib image.ssd --locked --load-addr=FF1900 "B.*"
 """
 
 DIGEST_USAGE = "%(prog)s [global options] [digest options] [image file options] IMAGE FILE..."
@@ -1615,7 +1636,7 @@ DIGEST_USAGE = "%(prog)s [global options] [digest options] [image file options] 
 DIGEST_EPILOG = """examples:
   dfsimage digest -a md5 image.ssd MY_PROG
 
-  dfsimage digest -n image.ssd '*.*'
+  dfsimage digest -n image.ssd "*.*"
 
   dfsimage digest -nn --sector=0/0-0/1 image.ssd
 """

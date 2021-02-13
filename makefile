@@ -1,6 +1,6 @@
 .PHONY: package venv
 
-VERSION=0.9rc1
+VERSION=0.9rc2
 
 venv: venv/pyvenv.cfg
 
