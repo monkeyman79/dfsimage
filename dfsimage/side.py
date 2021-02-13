@@ -461,7 +461,7 @@ class Side:
             start = (i+1) * 8
             end = (i+2) * 8
             entry = Entry(self, i, self.csector1[start:end], self.csector2[start:end])
-            if entry.fullname_ascii == name:
+            if entry.fullname_ascii.lower() == name.lower():
                 return entry
             i += 1
         return None

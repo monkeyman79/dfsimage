@@ -4,6 +4,7 @@
 # pylint: disable = invalid-name
 # pylint: disable = multiple-statements
 
+from re import Pattern
 from typing import Protocol, Callable, TypeVar, Tuple, Optional
 from typing import Union, List
 
@@ -34,8 +35,11 @@ class ImageProtocol(Protocol):
     current_dir: str
     default_side: int
 
-    def parse_name(self, name: str,
-                   is_pattern: bool) -> Tuple[str, Optional[str], Optional[int]]: ...
+    def parse_pattern(self, name: str) -> Tuple[
+        Pattern, Optional[Pattern], Optional[int]]: ...
+
+    def parse_name(self, name: str, is_pattern: bool) -> Tuple[
+        str, Optional[str], Optional[int]]: ...
 
     def to_fullname(self, filename: str,
                     head: int = None) -> Tuple[str, Optional[int]]: ...

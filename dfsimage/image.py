@@ -4,6 +4,10 @@ import os
 import sys
 import hashlib
 import itertools
+import fnmatch
+import re
+
+from re import Pattern
 
 from io import SEEK_SET
 
@@ -900,7 +904,25 @@ class Image:
                     name = name[first_letter+1:]
                     done = False
 
-        return name, dirname, head
+        return unicode_to_bbc(name), dirname, head
+
+    def parse_pattern(self, name: str) -> Tuple[
+            Pattern, Optional[Pattern], Optional[int]]:
+        """Parse filename pattern and convert to regular expression.
+
+        Returns:
+            File name pattern, directory name pattern or None and head number or None.
+        Raise:
+            ValueError: drive name in pattern is invalid or not present.
+        """
+        name, dirname, head = self.parse_name(name, True)
+
+        f_pattern = (re.compile(fnmatch.translate(name), re.IGNORECASE)
+                     if name is not None else None)
+        d_pattern = (re.compile(fnmatch.translate(dirname), re.IGNORECASE)
+                     if dirname is not None else None)
+
+        return f_pattern, d_pattern, head
 
     def to_fullname(self, filename: str,
                     head: int = None) -> Tuple[str, Optional[int]]:
@@ -938,8 +960,8 @@ class Image:
         filename = "%s.%s" % (f_dir, filename)
 
         # validate filename characters
-        if any(not Entry.isnamechar(c)
-               for c in unicode_to_bbc(filename).encode('ascii')):
+        if any(not Entry.isnamechar(ord(c))
+               for c in filename):
             raise ValueError("invalid characters in filename '%s'" % filename)
 
         return filename, head
@@ -976,11 +998,11 @@ class Image:
                     if default_head is None or side.head == default_head
                     for file in side.files]
 
-        parsed: List[Tuple[str, Optional[str], Optional[int]]]
+        parsed: List[Tuple[Pattern, Optional[Pattern], Optional[int]]]
         if isinstance(pattern, str):
-            parsed = [self.parse_name(pattern, True)]
+            parsed = [self.parse_pattern(pattern)]
         else:
-            parsed = list(self.parse_name(pat, True) for pat in pattern)
+            parsed = list(self.parse_pattern(pat) for pat in pattern)
         return [file for side in self.sides
                 for file in side.files
                 if file.match_parsed(parsed, default_head)]
@@ -1145,13 +1167,13 @@ class Image:
         if default_head is None:
             default_head = self._default_head
 
-        parsed: Optional[List[Tuple[str, Optional[str], Optional[int]]]]
+        parsed: Optional[List[Tuple[Pattern, Optional[Pattern], Optional[int]]]]
         if pattern is None:
             parsed = None
         elif isinstance(pattern, str):
-            parsed = [self.parse_name(pattern, True)]
+            parsed = [self.parse_pattern(pattern)]
         else:
-            parsed = list(self.parse_name(pat, True) for pat in pattern)
+            parsed = list(self.parse_pattern(pat) for pat in pattern)
 
         count = 0
         skipped = 0

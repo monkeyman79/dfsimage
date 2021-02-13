@@ -4,7 +4,7 @@ import sys
 import hashlib
 from typing import Optional, Union, Sequence, List, Dict, Tuple
 from typing import cast
-from fnmatch import fnmatchcase
+from re import Pattern
 
 from .simplewarn import warn
 from .consts import SECTOR_SIZE, CATALOG_SECTORS
@@ -687,7 +687,7 @@ class Entry:
             return self.sorting_string < other.sorting_string
         return NotImplemented
 
-    def _match(self, parsed_pattern: Tuple[str, Optional[str], Optional[int]],
+    def _match(self, parsed_pattern: Tuple[Pattern, Optional[Pattern], Optional[int]],
                default_head: int = None) -> bool:
 
         # Split fullname to drive, directory and name
@@ -705,20 +705,19 @@ class Entry:
         # If directory is not emptry, is must match this file
         directory = self.__get_directory(True)
         if d_pat is not None:
-            d_pat = unicode_to_bbc(d_pat)
-            if not fnmatchcase(directory, d_pat):
+            if d_pat.match(directory) is None:
                 return False
+
         # Otherwise this file must be in default directory
         else:
-            d_pat = unicode_to_bbc(self.side.image.current_dir)
-            if self.directory != d_pat:
+            if self.directory != unicode_to_bbc(self.side.image.current_dir):
                 return False
 
-        filename = self.__get_filename(True)
-        return fnmatchcase(filename, unicode_to_bbc(f_pat))
+        return f_pat.match(self.__get_filename(True)) is not None
 
     def match_parsed(self,
-                     parsed_patterns: Optional[List[Tuple[str, Optional[str], Optional[int]]]],
+                     parsed_patterns: Optional[List[Tuple[
+                         Pattern, Optional[Pattern], Optional[int]]]],
                      default_head: int = None) -> bool:
         """Test whether the entry matches any on the parsed pattern list."""
         if parsed_patterns is None:
@@ -742,11 +741,11 @@ class Entry:
             return default_head is None or default_head == self.head
 
         if isinstance(pattern, str):
-            parsed = self.side.image.parse_name(pattern, True)
+            parsed = self.side.image.parse_pattern(pattern)
             return self._match(parsed, default_head)
 
         for pat in pattern:
-            parsed = self.side.image.parse_name(pat, True)
+            parsed = self.side.image.parse_pattern(pat)
             if self._match(parsed, default_head):
                 return True
 
