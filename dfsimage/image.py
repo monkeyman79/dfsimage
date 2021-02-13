@@ -1981,6 +1981,19 @@ class _ImportFiles:
         self.default_head: Optional[int] = default_head
         self.filelist: List[Dict] = []
 
+    def _check_path(self, file) -> bool:
+        if not os.path.exists(file):
+            if self.silent:
+                return False
+        os.stat(file)
+
+        if os.path.isdir(file):
+            if not self.silent:
+                warn(DFSWarning("skipping directory '%s'" % file))
+            return False
+
+        return True
+
     def _scan_inf_files(self):
         index = 0
         inf_cache = InfCache()
@@ -1992,26 +2005,20 @@ class _ImportFiles:
             dfs_name = self.dfs_names[index] if self.dfs_names is not None else None
             basename = os.path.basename(file)
 
-            if not os.path.exists and self.silent:
+            if not self._check_path(file):
                 index += 1
                 continue
 
-            if os.path.isdir(file):
-                if not self.silent:
-                    warn(DFSWarning("skipping directory '%s'" % file))
-                index += 1
-                continue
-
-            # Inf file passed - get data file
-            if self.inf_mode != INF_MODE_NEVER and file.lower().endswith(".inf"):
-                inf = inf_cache.get_inf_by_inf_file(file)
+            # Try to find inf file
+            if self.inf_mode != INF_MODE_NEVER:
+                if file.lower().endswith(".inf"):
+                    # Inf file passed - get data file
+                    inf = inf_cache.get_inf_by_inf_file(file)
                 if inf is not None:
                     displayfile = displayfile[:-4]
-                    host_file = inf.inf_path[:-4]
-
-            # Data file passed - try to find inf file
-            if self.inf_mode != INF_MODE_NEVER and inf is None:
-                inf = inf_cache.get_inf_by_host_file(file)
+                else:
+                    # Data file passed - try to find inf file
+                    inf = inf_cache.get_inf_by_host_file(file)
                 if inf is not None:
                     host_file = inf.inf_path[:-4]
 
@@ -2019,7 +2026,7 @@ class _ImportFiles:
             if host_file is None:
                 host_file = canonpath(file)
                 if self.inf_mode == INF_MODE_ALWAYS:
-                    raise ValueError("missing inf file for %s" % host_file)
+                    raise ValueError("missing inf file for %s" % file)
 
             # Add file if not already encountered
             if host_file not in fileset:
