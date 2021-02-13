@@ -351,7 +351,7 @@ class InfDirectoryCache:
 
                 # Convert to lower case if possible
                 name = foldfilecase(self.dir_path, entry.name)
-                full_path = os.path.join(self.dir_path, name)
+                full_path = os.path.realpath(os.path.join(self.dir_path, entry.name))
 
                 # Try to load the file, on exception issue warning and continue
                 try:

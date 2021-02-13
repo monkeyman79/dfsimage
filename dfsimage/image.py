@@ -2106,7 +2106,7 @@ class _ExportFiles:
         """Returns True to overwrite, False to generate next available filename."""
 
         # Inf path exists, check if it's the same dfs name
-        if inf.filename == dfs_name:
+        if inf.filename.lower() == dfs_name.lower():
 
             # Already exists for the same dfs name
             if not self.replace and just_created:
@@ -2264,10 +2264,8 @@ class _ExportFiles:
             file.write(data)
 
         if inf_name is not None:
-            inf.inf_path = canonpath(inf_name)
+            inf.inf_path = os.path.realpath(inf_name)
             inf.save()
-            # Twice (!) to update canonical path form
-            inf.inf_path = canonpath(inf_name)
             self.inf_cache.update(inf.inf_path, inf)
 
         if self.verbose:
