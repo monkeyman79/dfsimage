@@ -35,6 +35,7 @@ class ImageProtocol(Protocol):
     mod_seq: int
     current_dir: str
     default_side: int
+    indexview: Optional[memoryview]
 
     def parse_name(self, name: str, is_pattern: bool) -> Tuple[
         str, Optional[str], Optional[int]]: ...

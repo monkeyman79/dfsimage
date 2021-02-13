@@ -135,6 +135,8 @@ class Side:
         self.modified = True
         self.csector1[0:8] = vbytes[0:8]  # type: ignore
         self.csector2[0:4] = vbytes[8:12]  # type: ignore
+        if self.image.indexview is not None:
+            self.image.indexview[0:12] = vbytes  # type: ignore
 
     @property
     def sequence_number(self) -> int:
