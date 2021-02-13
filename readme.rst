@@ -311,6 +311,8 @@ common command options
 |all|
   Process entire disk or disk side.
 
+  Commands: dump_, build_, digest_
+
 image modify options
 --------------------
 
