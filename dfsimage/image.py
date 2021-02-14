@@ -23,14 +23,16 @@ from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO
 from .consts import LIST_FORMAT_RAW
 from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
 from .consts import OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING, OPEN_MODE_NEW
-from .consts import WARN_FIRST
+from .consts import WARN_FIRST, WARN_NONE
 from .consts import INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER
 from .consts import TRANSLATION_STANDARD, TRANSLATION_SAFE
 from .consts import MMB_INDEX_ENTRY_SIZE, MMB_INDEX_SIZE
 from .consts import MMB_MAX_ENTRIES, MMB_DISK_SIZE, MMB_SIZE
+from .consts import MMB_STATUS_OFFSET, MMB_STATUS_LOCKED, MMB_STATUS_UNLOCKED
+from .consts import MMB_STATUS_UNINITIALIZED, MMB_STATUS_UNINITIALIZED_MASK
 
 from .misc import bchr, LazyString, json_dumps, xml_dumps
-from .misc import DFSWarning
+from .misc import DFSWarning, ValidationWarning
 
 from .conv import unicode_to_bbc, NAME_SAFE_TRANS, NAME_STD_TRANS
 
@@ -46,8 +48,8 @@ class Image:
     """DFS floppy disk image loaded (or mapped) into memory."""
 
     TABLE_FORMAT = (
-        "{image_filename:12}|"
-        "{number_of_sides}|{tracks}|{size:6}|{min_size:6}|{max_size:6}|"
+        "{image_displayname:15}|"
+        "{tracks}|{size:6}|"
         "{is_valid:1}|{sha1}"
         )
 
@@ -76,6 +78,7 @@ class Image:
             raise ValueError("40 tracks disk invalid for MMB entry")
 
         self._modified = False
+        self._index_modified = False
         if heads == 1:
             self.linear = True
         elif linear is None:
@@ -86,7 +89,7 @@ class Image:
         self.tracks = tracks
         self.sectors_per_head = self.tracks * SECTORS
         self._data = bytearray(bchr(0xE5) * (self.heads * self.tracks * TRACK_SIZE))
-        self.dataview = memoryview(self._data)
+        self._dataview = memoryview(self._data)
         self.path = os.path.abspath(fname)
         self.filename = os.path.basename(fname)
         self.basename, _ = os.path.splitext(self.filename)
@@ -97,11 +100,11 @@ class Image:
         self.file: Optional[IO[bytes]] = None
         self.is_read_only = True
         self.is_new_image = False
-        self.index = index
-        self.offset = 0 if index is None else MMB_INDEX_SIZE + index * MMB_DISK_SIZE
+        self._index = index
+        self._offset = 0 if index is None else MMB_INDEX_SIZE + index * MMB_DISK_SIZE
         self._index_data = None if index is None else bytearray(b'\0' * MMB_INDEX_ENTRY_SIZE)
-        self.indexview = None if index is None else memoryview(cast(bytearray, self._index_data))
-        self.index_offset = None if index is None else (index + 1) * MMB_INDEX_ENTRY_SIZE
+        self._indexview = None if index is None else memoryview(cast(bytearray, self._index_data))
+        self._index_offset = None if index is None else (index + 1) * MMB_INDEX_ENTRY_SIZE
         self._current_dir = '$'
         self._default_head: Optional[int] = None if self.heads != 1 else 0
 
@@ -112,7 +115,85 @@ class Image:
     @property
     def is_mmb(self) -> bool:
         """Return True if image is contained in MMB file."""
-        return self.offset != 0
+        return self._offset != 0
+
+    @property
+    def index(self) -> int:
+        """Index of image in an MMB file or 0."""
+        if self._index is None:
+            return 0
+        return self._index
+
+    @property
+    def displayname(self) -> str:
+        """Image file name with index appended for MMB or DSD file."""
+        if self.is_mmb:
+            return "%s:%d" % (self.filename, self.index)
+        return self.filename
+
+    @property
+    def locked(self) -> bool:
+        """Image locked flag in the MMB index."""
+        if self._indexview is None:
+            return False
+        return self._mmb_status_byte == MMB_STATUS_LOCKED
+
+    @locked.setter
+    def locked(self, value: bool):
+        if self._indexview is None:
+            raise PermissionError("not an MMB file")
+
+        if not self.initialized:
+            raise PermissionError("image is not initialized")
+
+        if value:
+            # Lock image
+            self._mmb_status_byte = MMB_STATUS_LOCKED
+        else:
+            # Unlock image
+            self._mmb_status_byte = MMB_STATUS_UNLOCKED
+
+    @property
+    def initialized(self) -> bool:
+        """Disk initialized flag in the MMB index."""
+        if self._indexview is None:
+            return True
+
+        return (self._mmb_status_byte & MMB_STATUS_UNINITIALIZED_MASK
+                != MMB_STATUS_UNINITIALIZED)
+
+    @initialized.setter
+    def initialized(self, value: bool):
+        if self._indexview is None:
+            raise PermissionError("not an MMB file")
+
+        if value:
+            if not self.initialized:
+                # Activate image
+                self._mmb_status_byte = MMB_STATUS_UNLOCKED
+
+        else:
+            # Deactivate image
+            if self.locked:
+                raise PermissionError("image is locked")
+            self._mmb_status_byte = MMB_STATUS_UNINITIALIZED
+
+    @property
+    def _mmb_status_byte(self) -> int:
+        """MMB index status byte, no questions asked."""
+        if self._indexview is None:
+            return 15
+        return self._indexview[MMB_STATUS_OFFSET]  # type: ignore
+
+    @_mmb_status_byte.setter
+    def _mmb_status_byte(self, value: int):
+        if self._indexview is None:
+            raise PermissionError("not an MMB file")
+        if self.is_read_only:
+            raise PermissionError("image open for read only")
+        if self._indexview[MMB_STATUS_OFFSET] != value:  # type: ignore
+            self._indexview[MMB_STATUS_OFFSET] = value  # type: ignore
+            self._index_modified = True
 
     @property
     def current_dir(self) -> str:
@@ -210,6 +291,11 @@ class Image:
         if value:
             if self.is_read_only:
                 raise PermissionError("image open for read only")
+            if self.locked:
+                raise PermissionError("image is locked")
+            if not self.initialized:
+                raise PermissionError("image is not initialized. "
+                                      "use 'drestore' or 'format'")
             self.mod_seq += 1
         self._modified = value
 
@@ -310,8 +396,8 @@ class Image:
             raise IndexError("invalid track number")
         if sector < 0 or sector >= SECTORS:
             raise IndexError("invalid sector number")
-        return self.dataview[self.sector_start(head, track, sector):
-                             self.sector_end(head, track, sector)]
+        return self._dataview[self.sector_start(head, track, sector):
+                              self.sector_end(head, track, sector)]
 
     def _logical_sector(self, head: int, logical_sector: int) -> memoryview:
         """Get 'memoryview' object to sector data by logical sector number.
@@ -357,7 +443,7 @@ class Image:
             raise IndexError("invalid track number")
         track_start = self.track_start(head, track)
         track_end = self.track_end(head, track)
-        return self.dataview[track_start:track_end]
+        return self._dataview[track_start:track_end]
 
     def _validate_sectors(self, head: int, start_track: int, start_sector: int,
                           end_track: int, end_sector: int):
@@ -411,14 +497,14 @@ class Image:
             start = self.sector_start(head, start_track, start_sector)
             end = self.sector_start(head, end_track, end_sector)
             if start != end:
-                chunks.append(self.dataview[start:end])
+                chunks.append(self._dataview[start:end])
 
         else:
             # Go though all tracks but last and append data chunks
             while start_track != end_track:
                 start = self.sector_start(head, start_track, start_sector)
                 end = self.sector_start(head, start_track, SECTORS)
-                dataview = self.dataview[start:end]
+                dataview = self._dataview[start:end]
                 if len(dataview) != 0:
                     chunks.append(dataview)
                 count += SECTORS - start_sector
@@ -428,7 +514,7 @@ class Image:
             if start_sector != end_sector:
                 start = self.sector_start(head, start_track, start_sector)
                 end = self.sector_start(head, start_track, end_sector)
-                dataview = self.dataview[start:end]
+                dataview = self._dataview[start:end]
                 if len(dataview) != 0:
                     chunks.append(dataview)
                 count += end_sector - start_sector
@@ -482,6 +568,8 @@ class Image:
         return self.sector_end(self.heads - 1, self.tracks - 1, SECTORS - 1)
 
     def _get_size_for_save(self, size_option: int = None) -> int:
+        if self.is_mmb:
+            return self.original_size
         if size_option is None:
             size_option = SIZE_OPTION_KEEP
         if (size_option == SIZE_OPTION_EXPAND
@@ -533,9 +621,9 @@ class Image:
     def __str__(self) -> str:
         """Get string representation of Image."""
         if self.file is None:
-            return "<Image %s %dS %dT closed>" % (self.filename, self.heads,
+            return "<Image %s %dS %dT closed>" % (self.displayname, self.heads,
                                                   self.tracks)
-        return "<Image %s %dS %dT %s>" % (self.filename, self.heads, self.tracks,
+        return "<Image %s %dS %dT %s>" % (self.displayname, self.heads, self.tracks,
                                           self.sha1)
 
     def __repr__(self) -> str:
@@ -594,7 +682,7 @@ class Image:
         return "%d side%s %d tracks" % (heads,
                                         "" if heads == 1 else "s", tracks)
 
-    def validate(self, warn_mode: int = WARN_FIRST) -> bool:
+    def validate(self, warn_mode: int = None) -> bool:
         """Validate disk image.
 
         Validate disk image. Raise exception if a fatal error is encountered.
@@ -606,6 +694,12 @@ class Image:
         """
         self._not_closed()
         isvalid = True
+
+        if warn_mode is None:
+            warn_mode = WARN_FIRST
+
+        if warn_mode != WARN_NONE and not self.initialized:
+            warn(ValidationWarning("image is not initialized"))
 
         # Validate both sides
         for side in self.sides:
@@ -759,16 +853,27 @@ class Image:
         "image_filename": "File name of the floppy disk image file.",
         "image_basename": "File name of the floppy disk image file without "
                           "extension.",
+        "image_index": "Index of the disk image in the MMB file.",
+        "image_displayname": "File name of the floppy disk image with an MMB "
+                             "index appended.",
         "number_of_sides": "Number of floppy disk image sides.",
         "tracks": "Number of tracks on each side.",
         "size": "Current disk image size.",
         "min_size": "Minimum disk image size to include last used sector.",
         'max_size': "Maximum disk image size.",
         "is_valid": "True if disk validation succeeded.",
-        "is_linear": "True if floppy disk image file has linear layout "
-                     "is single sided or is double sided ssd file.",
+        "is_linear": "True if floppy disk image file has linear layout.",
+        "locked": "Image locked flag in the MMB catalog - True if image is locked.",
+        "initialized": "Image initialized flag in the MMB catalog - True if "
+                       "image is initialized.",
+        "mmb_status": "Image status in the MMB catalog - "
+                      "'L' if image is locked, 'U' if image is uninitialized, "
+                      "'I' if status flag is invalid, empty string otherwise.",
+        "mmb_status_byte": "Raw MMB status byte value in the MMB catalog.",
         "sha1": "SHA1 digest of the entire disk image file."
     }
+
+    MMB_STATUS_MAP = {0: 'L', 15: '', 240: 'U'}
 
     def get_properties(self, for_format: bool, recurse: bool,
                        level: int = 0,
@@ -807,10 +912,19 @@ class Image:
                 "sha1": LazyString(cast(Property['Image', str],  # pylint: disable=no-member
                                         Image.sha1).fget, self)
                 }
+            if self.is_mmb or for_format:
+                mmb_stat = self._mmb_status_byte
+                attrs["image_index"] = self.index
+                attrs["locked"] = self.locked
+                attrs["initialized"] = self.initialized
+                attrs["mmb_status_bytes"] = mmb_stat
+                attrs["mmb_status"] = self.MMB_STATUS_MAP.get(mmb_stat, 'I')
+
             if not for_format:
                 attrs["sha1"] = str(attrs["sha1"])
             if for_format:
                 attrs["image_basename"] = self.basename
+                attrs["image_displayname"] = self.displayname
 
         if recurse or level < 0:
             parsed = self.compile_pattern(pattern)
@@ -1255,7 +1369,7 @@ class Image:
             parsed.ensure_matched()
         if skipped != 0:
             warn(DFSWarning("%s: %d files not deleted"
-                            % (self.filename, skipped)))
+                            % (self.displayname, skipped)))
         return count
 
     def lock(self, pattern: PatternUnion, silent=False,
@@ -1495,9 +1609,45 @@ class Image:
             for side in self.sides:
                 side.compact()
 
+    def dkill(self) -> bool:
+        """Set disk status in MMB file to uninitialized."""
+        self._not_closed()
+
+        if self._indexview is None:
+            raise PermissionError("not an MMB file")
+
+        # Deactivate disk in the MMB index
+        if not self.initialized:
+            warn(DFSWarning("image already uninitialized"))
+            return False
+
+        self.initialized = False
+        return True
+
+    def drestore(self, warn_mode: int = None) -> bool:
+        """Set disk status in MMB file to uninitialized."""
+        self._not_closed()
+
+        if self._indexview is None:
+            raise PermissionError("not an MMB file")
+
+        # Activate disk in the MMB index
+        if self.initialized:
+            warn(DFSWarning("image already initialized"))
+            return False
+
+        self.initialized = True
+        self.validate(warn_mode)
+        return True
+
     def format(self) -> None:
         """Format default side or both sides."""
         self._not_closed()
+
+        # Activate disk in the MMB index
+        if not self.initialized:
+            self.initialized = True
+
         d_side = self._default_head
         if d_side is not None:
             self.get_side(d_side).format()
@@ -1518,7 +1668,7 @@ class Image:
         if os.path.sameopenfile(self.file.fileno(),  # type: ignore[union-attr]
                                 source.file.fileno()):  # type: ignore[union-attr]
             if not self.is_mmb:
-                if self.index == source.index:
+                if self._index == source._index:
                     raise ValueError("source and destination is the same image file")
             elif (default_head is None or source._default_head is None or
                     default_head == source._default_head):
@@ -1531,7 +1681,8 @@ class Image:
         if source.tracks > self.tracks:
             raise ValueError("cannot copy 80 tracks floppy to 40 tracks.")
 
-    def backup(self, source: 'Image', default_head: int = None):
+    def backup(self, source: 'Image', warn_mode: int = None,
+               default_head: int = None):
         """Copy all sectors data from other image.
 
         Args:
@@ -1562,10 +1713,14 @@ class Image:
         if len(source_sides) < len(dest_sides):
             raise ValueError("destination side must be selected.")
 
+        # Activate disk in the MMB index
+        if not self.initialized:
+            self.initialized = True
+
         for src, dst in zip(source_sides, dest_sides):
             dst.get_all_sectors().writeall(src.get_all_sectors())
 
-        self.validate()
+        self.validate(warn_mode)
 
     def copy_over(self, source: 'Image', pattern: PatternUnion,
                   replace=False, ignore_access=False, no_compact=False,
@@ -1618,7 +1773,7 @@ class Image:
                               no_compact=no_compact)
 
                 if verbose:
-                    print("%-40s <- %s" % (str(inf), source.filename))
+                    print("%-40s <- %s" % (str(inf), source.displayname))
 
                 count += 1
 
@@ -1635,7 +1790,7 @@ class Image:
 
         if len(files) != count:
             warn(DFSWarning("%s: %d files not copied"
-                            % (self.filename, len(files) - count)))
+                            % (self.displayname, len(files) - count)))
         return count
 
     @classmethod
@@ -1805,7 +1960,7 @@ class Image:
 
         return fsize, heads, tracks, linear, mmb
 
-    def _load_image(self, for_write: bool, warning_mode: int,
+    def _load_image(self, for_write: bool, warn_mode: Optional[int],
                     default_head: Optional[int]):
         # Sanity check
         if self.original_size > self.max_size:
@@ -1816,19 +1971,19 @@ class Image:
 
         mode_str = "rb+" if for_write else "rb"
         self.file = open(self.path, mode_str)
-        self.file.seek(self.offset, SEEK_SET)
+        self.file.seek(self._offset, SEEK_SET)
         if self.file.readinto(  # type: ignore[attr-defined]
                 self._data) != self.original_size:
             raise RuntimeError("unexpected image short read")
 
-        if self.index_offset is not None and self._index_data is not None:
-            self.file.seek(self.index_offset, SEEK_SET)
+        if self._index_offset is not None and self._index_data is not None:
+            self.file.seek(self._index_offset, SEEK_SET)
             if self.file.readinto(  # type: ignore[attr-defined]
                     self._index_data) != MMB_INDEX_ENTRY_SIZE:
                 raise RuntimeError("unexpected index short read")
 
         # Validate the image
-        self.validate(warning_mode)
+        self.validate(warn_mode)
 
         # Sanity check. Validate the image first to know how to calculate min_size
         if self.original_size < self.min_size:
@@ -1840,7 +1995,7 @@ class Image:
     @classmethod
     def _load(cls, filename: str, for_write: bool,
               heads: Optional[int], tracks: Optional[int],
-              linear: Optional[bool], warning_mode: Optional[int],
+              linear: Optional[bool], warn_mode: Optional[int],
               index: Optional[int]) -> 'Image':
         """Open file handle and load image file.
 
@@ -1854,7 +2009,7 @@ class Image:
                 together as opposed to more popular image format where track data for
                 two sides are interleaved. Default is True for double sided SSD images
                 and False for other double sided disks.
-            warning_mode: Optional; Warning mode for validation: WARN_FIRST - display
+            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
                 warning for first non-fatal validation error and stop validation, WARN_ALL -
                 display all validation errors, WARN_NONE - don't display validation errors.
         Raises:
@@ -1867,9 +2022,6 @@ class Image:
         # pylint: disable=protected-access
         fname_base = os.path.basename(filename)
         fname = os.path.abspath(filename)
-
-        if warning_mode is None:
-            warning_mode = WARN_FIRST
 
         # pylint: disable=unused-argument
         def formatmsg(message: Union[Warning, str]) -> str:
@@ -1891,7 +2043,7 @@ class Image:
             try:
                 new_image.original_size = fsize
 
-                new_image._load_image(for_write, warning_mode, None if mmb else index)
+                new_image._load_image(for_write, warn_mode, None if mmb else index)
 
             except:  # noqa: E722
                 new_image.close(False)
@@ -1908,20 +2060,22 @@ class Image:
         return new_image
 
     @classmethod
-    def _parse_index(cls, filename: str) -> Tuple[Optional[int], str]:
+    def _parse_index(cls, filename: str, index: Optional[int]) -> Tuple[Optional[int], str]:
         name, _, number = filename.rpartition(':')
-        if len(name) == 0 or len(number) > 3 or any(
+        if len(name) == 0 or any(
                 not 0x30 <= ord(c) <= 0x39 for c in number):
-            return None, filename
+            return index, filename
+
         value = int(number)
-        if value >= MMB_MAX_ENTRIES:
-            return None, filename
+        if index is not None and index != value:
+            raise ValueError("conflicting index number")
+
         return value, name
 
     @classmethod
     def open(cls, filename: str, for_write: bool = False, open_mode: int = None,
              heads: int = None, tracks: int = None, linear: bool = None,
-             warning_mode: int = None, index: int = None) -> 'Image':
+             warn_mode: int = None, index: int = None) -> 'Image':
         """Open disk image file.
 
         Created Image object keeps open file handle to the disk image file, so make sure
@@ -1947,7 +2101,7 @@ class Image:
                 together as opposed to more popular image format where track data for
                 two sides are interleaved. Default is True for double sided SSD images
                 and False for other double sided disks.
-            warning_mode: Optional; Warning mode for validation: WARN_FIRST - display
+            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
                 warning for first non-fatal validation error and stop validation, WARN_ALL -
                 display all validation errors, WARN_NONE - don't display validation errors.
             index: Optional; Image index, required for MMB file, or drive number for double
@@ -1971,12 +2125,14 @@ class Image:
                 open_mode == OPEN_MODE_NEW and not for_write):
             raise ValueError("invalid open mode")
 
-        if index is None:
-            index, filename = cls._parse_index(filename)
+        index, filename = cls._parse_index(filename, index)
+
+        if index is not None and (index < 0 or index >= MMB_MAX_ENTRIES):
+            raise ValueError("invalid index number")
 
         if open_mode != OPEN_MODE_NEW:
             try:
-                return cls._load(filename, for_write, heads, tracks, linear, warning_mode, index)
+                return cls._load(filename, for_write, heads, tracks, linear, warn_mode, index)
             except FileNotFoundError:
                 if open_mode == OPEN_MODE_EXISTING or not for_write:
                     raise
@@ -1995,16 +2151,19 @@ class Image:
         self._not_closed()
         if self.file is None or self.is_read_only:
             return
-        size = self._get_size_for_save(size_option)
-        self.file.seek(self.offset, SEEK_SET)
-        self.file.write(self._data[:size])
-        if self.index_offset is not None and self._index_data is not None:
-            self.file.seek(self.index_offset, SEEK_SET)
+        if self.modified:
+            size = self._get_size_for_save(size_option)
+            self.file.seek(self._offset, SEEK_SET)
+            self.file.write(self._data[:size])
+            if not self.is_mmb and size_option == SIZE_OPTION_SHRINK:
+                self.file.truncate(size)
+            self.modified = False
+            self.original_size = size
+        if (self._index_modified and self._index_offset is not None
+                and self._index_data is not None):
+            self.file.seek(self._index_offset, SEEK_SET)
             self.file.write(self._index_data)
-        if not self.is_mmb and size_option == SIZE_OPTION_SHRINK:
-            self.file.truncate(size)
-        self.modified = False
-        self.original_size = size
+            self._index_modified = False
 
     def close(self, save: bool = True):
         """Close and invalidate object.
@@ -2014,7 +2173,8 @@ class Image:
                 for read only, and data has been modified.
         """
         if self.file is not None:
-            if save and not self.is_read_only and self.modified:
+            if save and not self.is_read_only and (
+                    self.modified or self._index_modified):
                 self.save()
             self.file.close()
             self.file = None
@@ -2022,7 +2182,7 @@ class Image:
                 os.remove(self.path)
 
         self._data = cast(bytearray, None)
-        self.dataview = cast(memoryview, None)
+        self._dataview = cast(memoryview, None)
 
         # This may be redundant, but it won't hurt
         if self.sides is not None:
@@ -2208,7 +2368,7 @@ class _ImportFiles:
 
         if count != len(self.filelist):
             warn(DFSWarning("%s: %d files not imported"
-                            % (self.image.filename, len(self.filelist) - count)))
+                            % (self.image.displayname, len(self.filelist) - count)))
 
         return count
 
@@ -2459,6 +2619,6 @@ class _ExportFiles:
 
         if skipped != 0:
             warn(DFSWarning("%s: %d files not exported"
-                            % (self.image.filename, skipped)))
+                            % (self.image.displayname, skipped)))
 
         return count

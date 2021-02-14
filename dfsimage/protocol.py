@@ -5,7 +5,7 @@
 # pylint: disable = multiple-statements
 
 from typing import Protocol, Callable, TypeVar, Tuple, Optional
-from typing import Union, List
+from typing import Union, List, Dict
 from typing import overload
 
 from .sectors import Sectors
@@ -35,7 +35,21 @@ class ImageProtocol(Protocol):
     mod_seq: int
     current_dir: str
     default_side: int
-    indexview: Optional[memoryview]
+    _indexview: Optional[memoryview]
+    _index_modified: bool
+    locked: bool
+    initialized: bool
+    _mmb_status_byte: int
+    MMB_STATUS_MAP: Dict[int, str]
+
+    @property
+    def index(self) -> int: ...
+
+    @property
+    def is_mmb(self) -> bool: ...
+
+    @property
+    def displayname(self) -> str: ...
 
     def parse_name(self, name: str, is_pattern: bool) -> Tuple[
         str, Optional[str], Optional[int]]: ...
@@ -111,7 +125,7 @@ class ImageProtocol(Protocol):
                      verbose=False, silent=False,
                      default_head: int = None) -> int: ...
 
-    def backup(self, source, default_head: int = None): ...
+    def backup(self, source, warn_mode: int = None, default_head: int = None): ...
 
     def copy_over(self, source, pattern: PatternUnion,
                   replace=False, ignore_access=False, no_compact=False,

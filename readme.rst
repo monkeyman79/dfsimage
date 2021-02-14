@@ -158,12 +158,15 @@ command list
 .. |unlock| replace:: ``unlock``
 .. |attrib| replace:: ``attrib``
 .. |digest| replace:: ``digest``
+.. |dkill| replace:: ``dkill``
+.. |drestore| replace:: ``drestore``
+.. |validate| replace:: ``validate``
 
 |list|_ (``cat``, ``index``)
   List files or disk image properties.
 |create|_ (``modify``)
   Create new floppy disk image or modify existing image.
-|backup|_ (``convert``)
+|backup|_ (``convert``, ``copy-disk``)
   Copy (and convert) image or one floppy side of image.
 |import|_
   Import files to floppy image.
@@ -193,6 +196,12 @@ command list
   Change existing file attributes.
 |digest|_
   Display digest (hash) of file or sectors contents
+|dkill|_
+  Mark disk image as uninitialized in the MMB index.
+|drestore|_
+  Restore disk image marked previously as uninitialized.
+|validate|_
+  Check disk for errors.
 
 options
 =======
@@ -200,7 +209,7 @@ options
 global options
 --------------
 
-``--warn=<none,first,all>``
+``--warn={none,first,all}``
   Validation warnings display mode. (default: first)
 
   * ``none`` - Don't display validation warnings.
@@ -320,7 +329,7 @@ image modify options
   Set disk title.
 ``--new-title=TITLE``
   Set disk title for newly created disk images.
-``--bootopt=<off,LOAD,RUN,EXEC>``
+``--bootopt={off,LOAD,RUN,EXEC}``
   Set disk boot option.
 
   * off - No action.
@@ -340,6 +349,16 @@ image modify options
   flight by tools.
 ``--expand``
   Expand disk image file to maximum size.
+
+.. _dlock:
+
+``--dlock``
+  Set disk image locked flag in MMB index.
+
+.. _dunlock:
+
+``--dunlock``
+  Reset disk image locked flag in MMB index.
 
 image file options
 --------------------
@@ -375,7 +394,15 @@ must be specified before the corresponding image file name.
   manually specify ``-40``, ``-D`` and ``--linear``, because they cannot be
   reliably distinguished from 80 track single sided disk images.
 ``-1, -2, --side={1,2}``
-  Select disk side in case of double sided disks.
+  Select disk side for double sided disks.
+
+.. _index-opt:
+
+``-i, --index=INDEX``
+  Select image index for MMB files. In case of double sided disks, index ``0``
+  selects first side and index ``1`` selects second side. Alternatively index can be
+  appended to the image file name separated by colon. For example
+  ``my_disk.dsd:1`` or ``beeb.mmb:253``.
 ``-d, --directory=DIRECTORY``
   Default DFS directory.
 
@@ -422,7 +449,7 @@ List files or disk image properties.
 
 |pattern|_
 
-``-f, --list-format=<cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT>``
+``-f, --list-format={cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT}``
   Listing format. (default: ``cat``)
   
   * ``raw`` - List file names
@@ -437,7 +464,7 @@ List files or disk image properties.
   See `file properties`_ for list of keyword available for custom format.
 ``--sort, --no-sort``
   Sort files by name.
-``--header-format=<cat,table,CUSTOM_FORMAT>``
+``--header-format={cat,table,CUSTOM_FORMAT}``
   Listing header format. (default: based of list format)
 
   * ``cat`` - As displayed by ``*CAT`` command.
@@ -496,6 +523,7 @@ Copy (and convert) image or one floppy side of image.
 
   dfsimage backup [`global options`_] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE
   dfsimage convert [`global options`_] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE
+  dfsimage copy-disk [`global options`_] [`image modify options`_] --from [`image file options`_] FROM_IMAGE --to [`image file options`_] TO_IMAGE
 
 **examples**:
 
@@ -503,6 +531,7 @@ Copy (and convert) image or one floppy side of image.
 
   dfsimage convert --from -D -L linear.img --to inter.dsd
   dfsimage backup --from -2 dual.dsd --to side2.ssd
+  dfsimage copy-disk --from beeb.mmc:123 --to my_disk.ssd
 
 import
 ------
@@ -821,7 +850,7 @@ Display digest (hash) of file or sectors contents
 ``-n, --name``
   Display each file or object name. Repeat for image name.
 
-``-m, --mode=<all,used,file,data>``
+``-m, --mode={all,used,file,data}``
   Digest mode for file:
 
   * ``all`` - include all attributes.
@@ -844,6 +873,58 @@ Display digest (hash) of file or sectors contents
 |track|_
 
 |all|_
+
+dkill
+-----
+
+Mark disk image as uninitialized in the MMB index.
+
+**synopsis**:
+
+.. |dunlock| replace:: --dunlock
+
+.. |index-opt| replace:: -i|--index=INDEX
+
+.. parsed-literal::
+
+  dfsimage dkill [`global options`_] [|dunlock|_] [|index-opt|_] IMAGE
+
+**examples**:
+
+.. code-block:: sh
+
+  dfsimage dkill beeb.mmb:300
+
+drestore
+--------
+
+Restore disk image marked previously as uninitialized.
+
+**synopsis**:
+
+.. |dlock| replace:: --dlock
+
+.. parsed-literal::
+
+  dfsimage drestore [`global options`_] [|dlock|_] [|index-opt|_] IMAGE
+
+**examples**:
+
+.. code-block:: sh
+
+  dfsimage drestore --dlock -i 302 beeb.mmb
+
+validate
+--------
+
+Check disk for errors. Runs the same cursory disk check that is executed before
+any other disk operation.
+
+**synopsis**:
+
+.. parsed-literal::
+
+  dfsimage validate [`global options`_] [`image file options`_] IMAGE
 
 formatting keyword arguments
 ============================
@@ -878,7 +959,12 @@ File properties are:
 * ``image_filename``       - File name of the floppy disk image file.
 * ``image_basename``       - File name of the floppy disk image file without
   extension.
+* ``image_index``          - Index of the disk image in the MMB file.
 * ``side``                 - Floppy disk side number - 1 or 2.
+* ``image_displayname``    - File name of the floppy disk image with MMB index
+  or double sided disk head number appended.
+* ``image_index_or_head``  - Disk image index for MMB file or head number
+  (0 or 1) for double sided disk.
 * ``directory``            - File directory name.
 * ``filename``             - File name not including directory name.
 * ``fullname_ascii``       - Full file name without translation of ASCII code
@@ -894,20 +980,20 @@ disk side properties
 --------------------
 
 Floppy disk side properties can be used as keyword arguments in formatting
-string passed as ``--header-format`` or ``--footer-format`` for ``list`` command.
+string passed as ``--header-format`` or ``--footer-format`` for ``list``
+command.
 
 Disk side properties are:
 
 * ``side``                 - Floppy disk side number - 1 or 2.
 * ``title``                - Floppy title string.
-* ``sequence``             - Sequence number incremented each time the disk
-  catalog is modified.
+* ``sequence``             - Sequence number incremented by the Acorn DFS each
+  time the disk catalog is modified.
 * ``opt_str``              - Boot option string - one of ``off``, ``LOAD``,
   ``RUN``, ``EXEC``.
 * ``is_valid``             - Disk validation result.
-* ``number_of_files``      - Number of files on floppy side.
-* ``sectors``              - Number of sectors on disk reported by catalog
-  sector.
+* ``number_of_files``      - Number of files on the floppy disk side.
+* ``sectors``              - Number of sectors on disk reported by the catalog.
 * ``free_sectors``         - Number of free sectors.
 * ``free_bytes``           - Number of free bytes.
 * ``used_sectors``         - Number of used sectors
@@ -922,6 +1008,11 @@ Disk side properties are:
 * ``image_filename``       - File name of the floppy disk image file.
 * ``image_basename``       - File name of the floppy disk image file without
   extension.
+* ``image_index``          - Index of the disk image in the MMB file
+* ``image_displayname``    - File name of the floppy disk image with MMB index
+  or double sided disk head number appended.
+* ``image_index_or_head``  - Disk image index for MMB file or head number
+  (0 or 1) for double sided disk.
 * ``tracks``               - Number of tracks on the floppy disk side.
 * ``drive``                - Drive number according to DFS: 0 for side 1, 2 for
   side 2.
@@ -933,6 +1024,14 @@ Disk side properties are:
 * ``opt``                  - Boot options value.
 * ``last_used_sector``     - Last used sector on floppy disk side.
 * ``current_dir``          - Current directory - ``'$'`` by default.
+* ``locked``               - Image locked flag in the MMB catalog -
+  True if image is locked.
+* ``initialized``          - Image initialized flag in the MMB catalog -
+  True if image is initialized.
+* ``mmb_status``           - Image status in the MMB catalog:
+  ``'L'`` if image is locked, ``'U'`` if image is uninitialized,
+  ``'I'`` if status flag is invalid, empty string otherwise.
+* ``mmb_status_byte``      - Raw MMB status byte value in the MMB catalog.
 
 image file properties
 ---------------------
@@ -947,17 +1046,29 @@ Image file properties are:
 * ``image_filename``       - File name of the floppy disk image file.
 * ``image_basename``       - File name of the floppy disk image file without
   extension.
+* ``image_index``          - Index of the disk image in the MMB file.
+* ``image_displayname``    - File name of the floppy disk image with an MMB
+  index appended.
 * ``number_of_sides``      - Number of floppy disk image sides.
 * ``tracks``               - Number of tracks on each side.
 * ``size``                 - Current disk image size.
 * ``min_size``             - Minimum disk image size to include last used sector.
 * ``max_size``             - Maximum disk image size.
 * ``is_valid``             - True if disk validation succeeded.
-* ``is_linear``            - True if floppy disk image file has linear layout is single sided or is double sided ssd file.
+* ``is_linear``            - True if floppy disk image file has linear layout.
+* ``locked``               - Image locked flag in the MMB catalog -
+  True if image is locked.
+* ``initialized``          - Image initialized flag in the MMB catalog -
+  True if image is initialized.
+* ``mmb_status``           - Image status in the MMB catalog:
+  ``'L'`` if image is locked, ``'U'`` if image is uninitialized,
+  ``'I'`` if status flag is invalid, empty string otherwise.
+* ``mmb_status_byte``      - Raw MMB status byte value in the MMB catalog.
+* ``sha1``                 - SHA1 digest of the entire disk image file.
 
 development status
 ==================
 
 The package is functionally complete, but lacks tests and Python module documentation.
 
-Plan for the future is to add support for the MMB files.
+Support for the MMB files is in progress

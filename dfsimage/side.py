@@ -32,7 +32,7 @@ class Side:
     """Represents one side of a floppy image."""
 
     TABLE_FORMAT = (
-        "{image_filename:12}|{drive}|{title:12}|{sequence:2}|"
+        "{image_displayname:15}|{title:12}|{sequence:2}|"
         "{number_of_files:2}|{opt_str:4}|"
         "{sectors:3}|{last_used_sector:3}|{used_sectors:3}|{free_sectors:3}|"
         "{max_free_blk_sectors:6}|{sha1_files}|{sha1}"
@@ -135,8 +135,9 @@ class Side:
         self.modified = True
         self.csector1[0:8] = vbytes[0:8]  # type: ignore
         self.csector2[0:4] = vbytes[8:12]  # type: ignore
-        if self.image.indexview is not None:
-            self.image.indexview[0:12] = vbytes  # type: ignore
+        if self.image._indexview is not None:
+            self.image._indexview[0:12] = vbytes  # type: ignore
+            self.image._index_modified = True
 
     @property
     def sequence_number(self) -> int:
@@ -490,12 +491,12 @@ class Side:
         if start_sector != last_used_sector:
             self.get_logical_sectors(start_sector, last_used_sector).clear()
 
-    def backup(self, source):
+    def backup(self, source, warn_mode: int = None):
         """Copy all sectors data from other image.
 
         See Image.backup
         """
-        return self.image.backup(source, default_head=self.head)
+        return self.image.backup(source, warn_mode, default_head=self.head)
 
     def copy_over(self, source, pattern: PatternUnion,
                   **kwargs) -> int:
@@ -705,11 +706,12 @@ class Side:
     PROPERTY_NAMES = {
         "side": "Floppy disk side number - 1 or 2.",
         "title": "Floppy title string.",
-        "sequence": "Sequence number incremented each time the disk catalog is modified.",
+        "sequence": "Sequence number incremented by the Acorn DFS each time "
+                    "the disk catalog is modified.",
         "opt_str": "Boot option string - one of 'off', 'LOAD', 'RUN', 'EXEC'.",
         "is_valid": "Disk validation result.",
-        "number_of_files": "Number of files on floppy side.",
-        "sectors": "Number of sectors on disk reported by catalog sector.",
+        "number_of_files": "Number of files on the floppy disk side.",
+        "sectors": "Number of sectors on disk reported by the catalog.",
         "free_sectors": "Number of free sectors.",
         "free_bytes": "Number of free bytes.",
         "used_sectors": "Number of used sectors",
@@ -722,7 +724,12 @@ class Side:
         "image_path": "Full path of the floppy disk image file.",
         "image_filename": "File name of the floppy disk image file.",
         "image_basename": "File name of the floppy disk image file without extension.",
-        "tracks": "Number of tracks on side.",
+        "image_index": "Index of the disk image in the MMB file.",
+        "image_displayname": "File name of the floppy disk image with MMB index "
+                             "or double sided disk head number appended.",
+        "image_index_or_head": "Disk image index for MMB file or "
+                               "head number (0 or 1) for double sided disk.",
+        "tracks": "Number of tracks on the floppy disk side.",
         "drive": "Drive number according to DFS: 0 for side 1, 2 for side 2.",
         "head": "Head index: 0 for side 1, 1 for side 2.",
         "end_offset": "Last entry offset byte in catalog sector. Indicates number of files "
@@ -730,7 +737,14 @@ class Side:
         "opt_byte": "Options byte in catalog sectors. Contains among other boot option value.",
         "opt": "Boot options value.",
         "last_used_sector": "Last used sector on floppy disk side.",
-        "current_dir": "Current directory - '$' by default."
+        "current_dir": "Current directory - '$' by default.",
+        "locked": "Image locked flag in the MMB catalog - True if image is locked.",
+        "initialized": "Image initialized flag in the MMB catalog - True if "
+                       "image is initialized.",
+        "mmb_status": "Image status in the MMB catalog - "
+                      "'L' if image is locked, 'U' if image is uninitialized, "
+                      "'I' if status flag is invalid, empty string otherwise.",
+        "mmb_status_byte": "Raw MMB status byte value in the MMB catalog."
         }
 
     def get_properties(self, for_format: bool, recurse: bool, level: int,
@@ -753,8 +767,11 @@ class Side:
         """
         # pylint: disable=no-member
         if level >= 0:
+            pre_attrs = {}
+            if for_format or not self.image.is_mmb:
+                pre_attrs['side'] = self.head + 1
             attrs = {
-                'side': self.head+1,
+                **pre_attrs,
                 'title': self.title,
                 'sequence': self.sequence_number,
                 'opt_str': self.opt_str,
@@ -774,6 +791,19 @@ class Side:
             attrs['image_filename'] = self.image.filename
             if for_format:
                 attrs['image_basename'] = self.image.basename
+            if for_format or self.image.is_mmb:
+                mmb_stat = self.image._mmb_status_byte
+                attrs['image_index'] = self.image.index
+                attrs["locked"] = self.image.locked
+                attrs["initialized"] = self.image.initialized
+                attrs["mmb_status_bytes"] = mmb_stat
+                attrs["mmb_status"] = self.image.MMB_STATUS_MAP.get(mmb_stat, 'I')
+
+        if for_format and level >= 0:
+            attrs['image_displayname'] = ("%s:%d" % (self.image.filename, self.head)
+                                          if self.image.heads > 1
+                                          else self.image.displayname)
+            attrs['image_index_or_head'] = self.image.index if self.image.is_mmb else self.head
 
         if recurse or level < 0:
             file_list = [file.get_properties(for_format=False, level=level+1)
@@ -797,7 +827,7 @@ class Side:
             'head': self.head,
             'end_offset': self.last_entry_offset,  # = (files-1)*8
             'opt_byte': self.opt_byte,
-            'opt': self.opt,  # 0, 1, 2 oe 3
+            'opt': self.opt,  # 0, 1, 2 or 3
             'used_sectors': self.used_sectors,
             'free_bytes': self.free_bytes,
             'max_free_blk': self.largest_free_block,

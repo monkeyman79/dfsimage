@@ -37,7 +37,7 @@ class Entry:
         )
 
     TABLE_FORMAT = (
-        "{image_filename:12}|{drive}|{index:2}|"
+        "{image_displayname:15}|{index:2}|"
         "{fullname:9}|{access:1}|"
         "{load_addr:06X}|{exec_addr:06X}|{size:06X}|"
         "{sha1_data}"
@@ -525,7 +525,12 @@ class Entry:
         "image_path": "Full path of the floppy disk image file.",
         "image_filename": "File name of the floppy disk image file.",
         "image_basename": "File name of the floppy disk image file without extension.",
+        "image_index": "Index of the disk image in the MMB file.",
         "side": "Floppy disk side number - 1 or 2.",
+        "image_displayname": "File name of the floppy disk image with MMB index "
+                             "or double sided disk head number appended.",
+        "image_index_or_head": "Disk image index for MMB file or "
+                               "head number (0 or 1) for double sided disk.",
         "directory": "File directory name.",
         "filename": "File name not including directory name.",
         "fullname_ascii": "Full file name without translation of ASCII code 0x60 "
@@ -567,12 +572,22 @@ class Entry:
             }
 
         if level == 0:
+            image = self.side.image
             ids = {
-                'image_path': self.side.image.path,
-                'image_filename': self.side.image.filename,
-                'image_basename': self.side.image.basename,
-                'side': self.head + 1
+                'image_path': image.path,
+                'image_filename': image.filename,
+                'image_basename': image.basename
             }
+            if for_format or not image.is_mmb:
+                attrs['side'] = self.head + 1
+            if for_format or image.is_mmb:
+                attrs['image_index'] = image.index
+            if for_format:
+                attrs['image_index_or_head'] = image.index if image.is_mmb else self.side.head
+                attrs['image_displayname'] = ("%s:%d" % (image.filename, self.side.head)
+                                              if image.heads > 1
+                                              else image.displayname)
+
             attrs = {**ids, **attrs}
 
         if not for_format:

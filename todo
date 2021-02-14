@@ -2,3 +2,6 @@
 - docs
 - mmap
 - mmb support
+- delegate locked, unlocked, active etc. to MMBEntry class
+- MMBImage class
+- dump text mode - pound translation

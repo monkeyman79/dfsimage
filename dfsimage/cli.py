@@ -61,7 +61,16 @@ Default for new images is two sides for images with `.dsd`
 extension and one side for all other.
 """
 
-SIDE_HELP = "Select disk side in case of double sided disks."
+SIDE_HELP = "Select disk side for double sided disks."
+
+INDEX_HELP = "Select image index for MMB files."
+
+INDEX_LONG_HELP = INDEX_HELP + """
+In case of double sided disks, index 0 selects first side and index 1 selects
+second side.
+Alternatively index can be appended to the image file name separated
+by colon. For example 'my_disk.dsd:1' or 'beeb.mmb:253'.
+"""
 
 LINEAR_HELP = "Select double sided disk data layout."
 
@@ -305,6 +314,7 @@ class _AddImageAction(argparse.Action):
         tracks = namespace.tracks
         sides = namespace.sides
         side = namespace.side
+        index = namespace.index
         linear = namespace.linear
         open_mode = namespace.open_mode
         directory = namespace.directory
@@ -316,12 +326,13 @@ class _AddImageAction(argparse.Action):
 
         for name in values:
             images.append({'name': name, 'tracks': tracks,
-                           'sides': sides, 'side': side,
+                           'sides': sides, 'side': side, 'index': index,
                            'linear': linear, 'directory': directory,
                            'open_mode': open_mode})
             tracks = None
             sides = None
             side = None
+            index = None
             linear = None
             directory = None
             open_mode = None
@@ -329,6 +340,7 @@ class _AddImageAction(argparse.Action):
         namespace.tracks = None
         namespace.sides = None
         namespace.side = None
+        namespace.index = None
         namespace.linear = None
         namespace.directory = None
         namespace.open_mode = None
@@ -374,18 +386,20 @@ class _AddImportAction(argparse.Action):
 def _open_from_params(params, for_write, warn_mode, existing=False):
     name = params["name"]
     sides = params["sides"]
+    index = params["index"]
     tracks = params["tracks"]
     linear = params["linear"]
     open_mode = params["open_mode"]
     if existing:
         open_mode = OPEN_MODE_EXISTING
 
-    image = Image.open(name, for_write, open_mode, sides, tracks, linear, warn_mode)
+    image = Image.open(name, for_write, open_mode, sides, tracks, linear,
+                       warn_mode=warn_mode, index=index)
 
     try:
         if image.default_side is not None:
             if params["side"] is not None and params["side"] != image.default_side:
-                raise ValueError("conflicting sides specified")
+                raise ValueError("conflicting index and side specified")
         else:
             image.default_side = params["side"]
         image.current_dir = params["directory"]
@@ -439,6 +453,22 @@ class _Process:
         if len(sect) != 0:
             return int(trk), int(sect)
         return image.logical_to_physical(int(trk))
+
+    def run_validate(self):
+        """Run validate."""
+        for params in self.images:
+            try:
+                _open_from_params(params, for_write=False,
+                                  warn_mode=self.warn_mode).close()
+            except (OSError, RuntimeError) as err:
+                if not self.cont:
+                    raise
+                warn(err)
+                continue
+
+
+def _validate_command(namespace, _parser):
+    _Process(namespace).run_validate()
 
 
 class _ListProcess(_Process):
@@ -592,7 +622,7 @@ class _DumpProcess(_Process):
         else:
             prefix = ""
             if self.name > 1 or name is None:
-                prefix = "%s:" % image.filename
+                prefix = "%s:" % image.displayname
             if name is not None:
                 if image.heads != 1 and drive is not None:
                     prefix += ":%d.%s" % (drive, name)
@@ -726,6 +756,8 @@ class _ModifyProcess(_Process):
                             else SIZE_OPTION_SHRINK if namespace.shrink
                             else None)
         self.compact = getattr(namespace, "compact", None)
+        self.dlock = getattr(namespace, "dlock", None)
+        self.dunlock = getattr(namespace, "dunlock", None)
         self.existing = False
         self.new_title = getattr(namespace, "new_title", None)
         self.title = getattr(namespace, "title", None)
@@ -751,6 +783,7 @@ class _ModifyProcess(_Process):
         self.sectors = getattr(namespace, "sector", None)
         self.all = getattr(namespace, "all", None)
         self.dump_format = getattr(namespace, "dump_format", None)
+        self.warn_mode2 = None
         self.directory = None
         self.command = None
 
@@ -805,7 +838,7 @@ class _ModifyProcess(_Process):
                 no_compact=self.no_compact, continue_on_error=self.cont,
                 verbose=(self.verbose > 1), silent=self.silent)
         if self.verbose:
-            print("%s: %d files imported" % (image.filename, count))
+            print("%s: %d files imported" % (image.displayname, count))
 
     def _read_stdin(self) -> bytes:
         if self.dump_format == "raw":
@@ -818,7 +851,7 @@ class _ModifyProcess(_Process):
             return data
 
         if self.dump_format == "ascii":
-            return codecs.escape_decode(   # type: ignore[attr-defined]
+            return codecs.escape_decode(  # type: ignore
                 sys.stdin.read().encode("ascii"))[0]
 
         return Sectors.decode_hexdump(sys.stdin.read())
@@ -910,36 +943,46 @@ class _ModifyProcess(_Process):
                 if locked is not None:
                     entry.locked = locked
         if self.verbose:
-            print("%s: %d files changed" % (image.filename, count))
+            print("%s: %d files changed" % (image.displayname, count))
 
-    def _cmd_format(self, image: Image):  # pylint: disable=no-self-use
+    def _cmd_format(self, image: Image):
         image.format()
         if self.verbose:
-            print("%s: formatted", image.filename)
+            print("%s: formatted" % image.displayname)
+
+    def _cmd_dkill(self, image: Image):
+        if image.dkill():
+            if self.verbose:
+                print("%s: set uninitialized status" % image.displayname)
+
+    def _cmd_drestore(self, image: Image):
+        if image.drestore(self.warn_mode2):
+            if self.verbose:
+                print("%s: restored initialized status" % image.displayname)
 
     def _cmd_delete(self, image: Image):
         if image.delete(filename=self.file,
                         ignore_access=self.ignore_access,
                         silent=self.silent):
             if self.verbose:
-                print("%s: file '%s' deleted" % (image.filename, self.file))
+                print("%s: file '%s' deleted" % (image.displayname, self.file))
 
     def _cmd_destroy(self, image: Image):
         count = image.destroy(pattern=self.files,
                               ignore_access=self.ignore_access,
                               silent=self.silent)
         if self.verbose:
-            print("%s: %d files deleted" % (image.filename, count))
+            print("%s: %d files deleted" % (image.displayname, count))
 
     def _cmd_lock(self, image: Image):
         count = image.lock(pattern=self.files, silent=self.silent)
         if self.verbose:
-            print("%s: %d files locked" % (image.filename, count))
+            print("%s: %d files locked" % (image.displayname, count))
 
     def _cmd_unlock(self, image: Image):
         count = image.unlock(pattern=self.files, silent=self.silent)
         if self.verbose:
-            print("%s: %d files unlocked" % (image.filename, count))
+            print("%s: %d files unlocked" % (image.displayname, count))
 
     def _cmd_rename(self, image: Image):
         if image.rename(from_name=self.oldname, to_name=self.newname,
@@ -947,7 +990,7 @@ class _ModifyProcess(_Process):
                         no_compact=self.no_compact, silent=self.silent):
             if self.verbose:
                 print("%s: file '%s' renamed to '%s'"
-                      % (image.filename, self.oldname, self.newname))
+                      % (image.displayname, self.oldname, self.newname))
 
     def _cmd_copy(self, image: Image):
         if image.copy(from_name=self.oldname, to_name=self.newname,
@@ -956,14 +999,14 @@ class _ModifyProcess(_Process):
                       preserve_attr=self.preserve_locked, silent=self.silent):
             if self.verbose:
                 print("%s: file '%s' copied to '%s'"
-                      % (image.filename, self.oldname, self.newname))
+                      % (image.displayname, self.oldname, self.newname))
 
     def _cmd_backup(self, image: Image):
         with _open_from_params(self.from_image[0], for_write=False,
-                               warn_mode=self.warn_mode) as src_image:
-            image.backup(source=src_image)
+                               warn_mode=self.warn_mode2) as src_image:
+            image.backup(source=src_image, warn_mode=WARN_NONE)
             if self.verbose:
-                print("%s: backup from %s", image.filename, src_image.filename)
+                print("%s: copied from %s" % (image.displayname, src_image.displayname))
 
     def _cmd_copyover(self, image: Image):
         with _open_from_params(self.from_image[0], for_write=False,
@@ -979,12 +1022,17 @@ class _ModifyProcess(_Process):
                                     silent=self.silent)
             if self.verbose:
                 print("%s: %d files copied from %s"
-                      % (image.filename, count, src_image.filename))
+                      % (image.displayname, count, src_image.displayname))
 
     def run_image(self, image: Image, params: Dict) -> None:
         """Apply operations to single image file."""
 
         self.directory = params['directory']
+        if self.dunlock and image.locked:
+            image.locked = False
+            if self.verbose:
+                print("%s: image unlocked" % image.displayname)
+
         if self.command is not None:
             self.command(image)
 
@@ -997,6 +1045,11 @@ class _ModifyProcess(_Process):
         for side in sides:
             self.run_per_side(image, side, index)
             index += 1
+
+        if self.dlock and not image.locked:
+            image.locked = True
+            if self.verbose:
+                print("%s: image locked" % image.displayname)
 
         if image.modified or self.save_option != SIZE_OPTION_KEEP:
             image.save(self.save_option)
@@ -1017,7 +1070,25 @@ def _create_command(namespace, parser):
 
 def _format_command(namespace, parser):
     proc = _ModifyProcess(namespace, parser)
+    # Skip validation if contents are going to be overwritten
+    proc.warn_mode2 = proc.warn_mode
+    proc.warn_mode = WARN_NONE
     proc.command = proc._cmd_format
+    proc.run()
+
+
+def _dkill_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
+    proc.command = proc._cmd_dkill
+    proc.run()
+
+
+def _drestore_command(namespace, parser):
+    proc = _ModifyProcess(namespace, parser)
+    # Skip validation on open
+    proc.warn_mode2 = proc.warn_mode
+    proc.warn_mode = WARN_NONE
+    proc.command = proc._cmd_drestore
     proc.run()
 
 
@@ -1073,6 +1144,9 @@ def _rename_command(namespace, parser):
 
 def _backup_command(namespace, parser):
     proc = _ModifyProcess(namespace, parser)
+    # Skip validation if contents are going to be overwritten
+    proc.warn_mode2 = proc.warn_mode
+    proc.warn_mode = WARN_NONE
     proc.command = proc._cmd_backup
     proc.run()
 
@@ -1144,7 +1218,7 @@ class _ExportProcess(_Process):
             verbose=(self.verbose > 1),
             silent=self.silent)
         if self.verbose:
-            print("%s: %d files exported" % (image.filename, count))
+            print("%s: %d files exported" % (image.displayname, count))
 
     def run(self):
         """Run export on all images."""
@@ -1270,6 +1344,8 @@ def _add_modify_options(parser, command):
     elif command in ("format", "backup"):
         add = modify_options.add_argument
         add('--title', action='append', help='Set disk title.')
+    modify_options.set_defaults(title=None)
+    modify_options.set_defaults(new_title=None)
 
     add = modify_options.add_argument
     if command in ("create", "import", "copy-over", "build", "format",
@@ -1279,20 +1355,46 @@ def _add_modify_options(parser, command):
         add('--sequence', action='append',
             help=SEQNUM_LONG_HELP if command == "template" else SEQNUM_HELP,
             type=int)
-    if command != "format":
+    modify_options.set_defaults(bootopt=None)
+    modify_options.set_defaults(sequence=None)
+    if command not in ("format", "dkill", "drestore"):
         add('--compact', action=argparse.BooleanOptionalAction,  # pylint: disable=no-member
             help='Coalesce fragmented free space on disk. Default is to compact '
             'disk if needed to make space for new file.')
-        modify_options.set_defaults(compact=None)
+    modify_options.set_defaults(compact=None)
 
-    group = modify_options.add_mutually_exclusive_group()
-    add = group.add_argument
-    add('--shrink', action='store_true',
-        help=SHRINK_LONG_HELP if command == "template" else SHRINK_HELP)
-    add('--expand', action='store_true', help="Expand disk image file to maximum size.")
+    if command != "dkill":
+        add('--dlock', action='store_true', help="Set disk image locked flag in MMB index")
+
+    if command != "drestore":
+        add('--dunlock', action='store_true', help="Reset disk image locked flag in MMB index")
+
+    if command not in ("dkill", "drestore"):
+        group = modify_options.add_mutually_exclusive_group()
+        add = group.add_argument
+        add('--shrink', action='store_true',
+            help=SHRINK_LONG_HELP if command == "template" else SHRINK_HELP)
+        add('--expand', action='store_true', help="Expand disk image file to maximum size.")
+    modify_options.set_defaults(shrink=None)
+    modify_options.set_defaults(expand=None)
 
 
-def _add_image_options(parser, existing, nargs, template=False):
+def _add_image_arg(parser, nargs):
+    parser.set_defaults(open_mode=None)
+    parser.set_defaults(tracks=None)
+    parser.set_defaults(sides=None)
+    parser.set_defaults(linear=None)
+    parser.set_defaults(side=None)
+    parser.set_defaults(index=None)
+    parser.set_defaults(directory=None)
+
+    if nargs is not None:
+        add = parser.add_argument
+        add('images', metavar='IMAGE', nargs=nargs, help='Floppy disk image.',
+            action=_AddImageAction)
+
+
+def _add_image_options(parser, existing, nargs, template=False, command=None):
 
     image_options = parser.add_argument_group('image file options', IMAGE_OPTIONS_HELP)
 
@@ -1304,53 +1406,45 @@ def _add_image_options(parser, existing, nargs, template=False):
             action=_StoreConstOnceAction, const=OPEN_MODE_EXISTING, dest='open_mode')
         add('--always', help="Create new image or open existing image,. This is the default.",
             action=_StoreConstOnceAction, const=OPEN_MODE_ALWAYS, dest='open_mode')
-    parser.set_defaults(open_mode=None)
 
-    if not template:
-        add('-80', help='80 tracks disk.', action=_StoreConstOnceAction, const=80, dest='tracks')
-        add('-40', help='40 tracks disk.', action=_StoreConstOnceAction, const=40, dest='tracks')
-        add('--tracks', action=_StoreOnceAction, choices=[80, 40], help=TRACKS_HELP)
-        parser.set_defaults(tracks=None)
-    else:
+    if template:
         add('-80', '-40', '--tracks', choices=[80, 40], help=TRACKS_LONG_HELP)
-
-    if not template:
-        add('-S', help='Single sided floppy image.', action=_StoreConstOnceAction,
-            const=1, dest='sides')
-        add('-D', help='Double sided floppy image.', action=_StoreConstOnceAction,
-            const=2, dest='sides')
-        add('--sides', action=_StoreOnceAction, choices=[1, 2], help=SIDES_HELP)
-        parser.set_defaults(sides=None)
-    else:
         add('-S', '-D', '--sides', choices=[1, 2], help=SIDES_LONG_HELP)
-
-    if not template:
-        add('-I', '--interleaved', help='Interleaved double sided disk layout.',
-            action=_StoreConstOnceAction, const=False, dest='linear')
-        add('-L', '--linear', help='Linear double sided disk layout',
-            action=_StoreConstOnceAction, const=True, dest='linear')
-        parser.set_defaults(linear=None)
-    else:
         add('-I', '-L', '--interleaved', '--linear', action='store_true',
             help=LINEAR_LONG_HELP)
-
-    if not template:
-        add('-1', help='Select first side.', action=_StoreConstOnceAction,
-            const=1, dest='side')
-        add('-2', help='Select second side.', action=_StoreConstOnceAction,
-            const=2, dest='side')
-        add('--side', action=_StoreOnceAction, choices=[1, 2], help=SIDE_HELP)
-        parser.set_defaults(side=None)
-    else:
         add('-1', '-2', '--side', choices=[1, 2], help=SIDE_HELP)
+        add('-i', '--index', type=int, help=INDEX_LONG_HELP)
 
-    add = image_options.add_argument
-    add('-d', '--directory', help="Default DFS directory.")
+    else:
+        if command not in ("dkill", "drestore"):
+            add('-80', help='80 tracks disk.', action=_StoreConstOnceAction,
+                const=80, dest='tracks')
+            add('-40', help='40 tracks disk.', action=_StoreConstOnceAction,
+                const=40, dest='tracks')
+            add('--tracks', action=_StoreOnceAction, choices=[80, 40], help=TRACKS_HELP)
+            add('-S', help='Single sided floppy image.', action=_StoreConstOnceAction,
+                const=1, dest='sides')
+            add('-D', help='Double sided floppy image.', action=_StoreConstOnceAction,
+                const=2, dest='sides')
+            add('--sides', action=_StoreOnceAction, choices=[1, 2], help=SIDES_HELP)
+            add('-I', '--interleaved', help='Interleaved double sided disk layout.',
+                action=_StoreConstOnceAction, const=False, dest='linear')
+            add('-L', '--linear', help='Linear double sided disk layout',
+                action=_StoreConstOnceAction, const=True, dest='linear')
+            if command != "validate":
+                add('-1', help='Select first side.', action=_StoreConstOnceAction,
+                    const=1, dest='side')
+                add('-2', help='Select second side.', action=_StoreConstOnceAction,
+                    const=2, dest='side')
+                add('--side', action=_StoreOnceAction, choices=[1, 2], help=SIDE_HELP)
 
-    if nargs is not None:
-        add = parser.add_argument
-        add('images', metavar='IMAGE', nargs=nargs, help='Floppy disk image file.',
-            action=_AddImageAction)
+        add('-i', '--index', action=_StoreOnceAction, type=int, help=INDEX_HELP)
+
+    if command not in ("validate", "dkill", "drestore"):
+        add = image_options.add_argument
+        add('-d', '--directory', help="Default DFS directory.")
+
+    _add_image_arg(parser, nargs)
 
 
 def hexint(string):
@@ -1561,12 +1655,16 @@ CREATE_EPILOG = """examples:
 BACKUP_USAGE = ('%(prog)s [global options] [image modify options] '
                 '--from [image file options] FROM_IMAGE --to [image file options] TO_IMAGE\n'
                 'convert [global options] [image modify options] '
+                '--from [image file options] FROM_IMAGE --to [image file options] TO_IMAGE\n'
+                'copy-disk [global options] [image modify options] '
                 '--from [image file options] FROM_IMAGE --to [image file options] TO_IMAGE')
 
 BACKUP_EPILOG = """examples:
   dfsimage convert --from -D -L linear.img --to inter.dsd
 
   dfsimage backup --from -2 dual.dsd --to side2.ssd
+
+  dfsimage copy-disk --from beeb.mmc:123 --to my_disk.ssd
 """
 
 IMPORT_USAGE = ('%(prog)s [global options] [import options] [image modify options] '
@@ -1617,6 +1715,14 @@ COPYOVER_EPILOG = """examples:
 
 FORMAT_EPILOG = """examples:
   dfsimage format image.ssd --title "Games"
+"""
+
+DKILL_EPILOG = """examples:
+  dfsimage dkill beeb.mmb:300
+"""
+
+DRESTORE_EPILOG = """examples:
+  dfsimage drestore --dlock -i 302 beeb.mmb
 """
 
 DESTROY_USAGE = ('%(prog)s [global options] [destroy options] [image modify options] '
@@ -1702,13 +1808,14 @@ def cli(prog=None, argv=None):
     cmd.set_defaults(command=_create_command)
 
     cmd = _add_subcommand(subparsers, prog, command="backup",
-                          aliases=["convert"],
+                          aliases=["convert", "copy-disk"],
                           help="Copy (and convert) image or one floppy side of image.",
                           usage=BACKUP_USAGE,
                           epilog=BACKUP_EPILOG,
                           format=custom_format,
                           no_global=True)
     subcommands["convert"] = cmd
+    subcommands["copy-disk"] = cmd
     required_args = cmd.add_argument_group("required arguments")
     required_args.group_usage = False
     _add_global_options(cmd)
@@ -1873,6 +1980,28 @@ def cli(prog=None, argv=None):
     cmd.add_argument("files", nargs="**", metavar="FILE", help="File to process.", action='extend')
     cmd.set_defaults(command=_digest_command)
 
+    cmd = _add_subcommand(subparsers, prog, command="dkill",
+                          help="Mark disk image as uninitialized in the MMB index.",
+                          epilog=DKILL_EPILOG,
+                          format=custom_format)
+    _add_modify_options(cmd, "dkill")
+    _add_image_options(cmd, True, nargs=1, command="dkill")
+    cmd.set_defaults(command=_dkill_command)
+
+    cmd = _add_subcommand(subparsers, prog, command="drestore",
+                          help="Restore disk image marked previously as uninitialized.",
+                          epilog=DRESTORE_EPILOG,
+                          format=custom_format)
+    _add_modify_options(cmd, "drestore")
+    _add_image_options(cmd, True, nargs=1, command="drestore")
+    cmd.set_defaults(command=_drestore_command)
+
+    cmd = _add_subcommand(subparsers, prog, command="validate",
+                          help="Check disk for errors.",
+                          format=custom_format)
+    _add_image_options(cmd, True, nargs=1, command="validate")
+    cmd.set_defaults(command=_validate_command)
+
     cmd = argparse.ArgumentParser(prog=prog, usage="%(prog)s COMMAND [options]...", add_help=False,
                                   formatter_class=custom_format,
                                   description="Options help:")
@@ -1903,6 +2032,7 @@ def cli(prog=None, argv=None):
 
     if (args.tracks is not None or args.sides is not None or
             args.side is not None or args.linear is not None or
+            args.index is not None or
             args.directory is not None or args.open_mode is not None):
         parser.error("image file options must be specified before image file name")
 
