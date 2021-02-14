@@ -23,6 +23,7 @@ from .consts import INF_MODE_ALWAYS, INF_MODE_NEVER, INF_MODE_AUTO
 from .consts import TRANSLATION_STANDARD, TRANSLATION_SAFE
 from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE, DIGEST_MODE_DATA
 
+from .conv import bbc_to_unicode, unicode_to_bbc
 from .misc import json_dumps, xml_dumps, get_digest
 from .simplewarn import warn
 
@@ -596,20 +597,20 @@ class _DumpProcess(_Process):
             raise ValueError("invalid digest mode")
         self.algorithm = getattr(namespace, "algorithm", None)
 
-    def dump(self, data):
+    def dump(self, data: bytes):
         "Dump data"
         if self.dump_format == "raw":
             sys.stdout.buffer.write(data)
 
         elif self.dump_format == "text":
-            newline = os.linesep.encode("ascii")
-            data = newline.join(data.splitlines())
-            if len(data) != 0:
-                data = data + newline
-            sys.stdout.buffer.write(data)
+            newline = os.linesep
+            str_data = newline.join(bbc_to_unicode(data.decode("ascii")).splitlines())
+            if len(str_data) != 0:
+                str_data = str_data + newline
+            sys.stdout.write(str_data)
 
         elif self.dump_format == "ascii":
-            print(codecs.escape_encode(data)[0].decode("ascii"))
+            print(codecs.escape_encode(data)[0].decode("ascii"))  # type: ignore
 
         else:
             Sectors.hexdump_buffer(data, width=self.width, ellipsis=self.ellipsis)
@@ -845,7 +846,7 @@ class _ModifyProcess(_Process):
             return sys.stdin.buffer.read()
 
         if self.dump_format == "text":
-            data = b'\r'.join(sys.stdin.buffer.read().splitlines())
+            data = b'\r'.join(unicode_to_bbc(sys.stdin.read()).encode("ascii").splitlines())
             if len(data) != 0:
                 data = data + b'\r'
             return data

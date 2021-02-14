@@ -32,10 +32,10 @@ class Side:
     """Represents one side of a floppy image."""
 
     TABLE_FORMAT = (
-        "{image_displayname:15}|{title:12}|{sequence:2}|"
-        "{number_of_files:2}|{opt_str:4}|"
-        "{sectors:3}|{last_used_sector:3}|{used_sectors:3}|{free_sectors:3}|"
-        "{max_free_blk_sectors:6}|{sha1_files}|{sha1}"
+        "{image_displayname:15}|{title:12}|{opt_str:4}|"
+        "{number_of_files:2}|"
+        "{sectors:3}|{last_used_sector:3}|{free_bytes:6}|"
+        "{max_free_blk:6}|{sha1_files}"
         )
 
     def __init__(self, image: ImageProtocol, head: int) -> None:
