@@ -1,6 +1,3 @@
 - tests + code coverage
 - docs
 - mmap
-- mmb support
-- delegate locked, unlocked, active etc. to MMBEntry class
-- MMBImage class

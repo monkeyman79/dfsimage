@@ -1,14 +1,22 @@
 """Miscellaneous utility classes and function used by the package."""
 
+import os
 import json
 import xml.etree.ElementTree as ET
 import hashlib
 
 from typing import Sequence, Optional, Union, TypeVar, List
 
+from .consts import MMB_INDEX_SIZE, MMB_SIZE, MMB_DISK_SIZE
+from .consts import MMB_MAX_ENTRIES
+
 
 class DFSWarning(UserWarning):
     """DFS operation warning."""
+
+
+class MMBWarning(UserWarning):
+    """MMB operation warning."""
 
 
 class ValidationWarning(UserWarning):
@@ -117,3 +125,22 @@ def xml_dumps(obj: object, root_name: str) -> str:
     _xml_add(obj, root, root_name)
     return ET.tostring(root, encoding="utf-8",  # type: ignore
                        xml_declaration=False).decode("utf-8")
+
+
+def is_mmb_file(fname: str) -> int:
+    """Check if file is MMB based on size and extension.
+
+    Returns: number of images in the MMB file or 0.
+    """
+    if not os.path.exists(fname):
+        return 0
+
+    fsize = os.path.getsize(fname)
+    if fname.lower().endswith(".mmb"):
+        if (fsize < MMB_INDEX_SIZE + MMB_DISK_SIZE or fsize > MMB_SIZE or
+                (fsize - MMB_INDEX_SIZE) % MMB_DISK_SIZE != 0):
+            raise ValueError("%s invalid MMB file size" % fname)
+        return (fsize - MMB_INDEX_SIZE) // MMB_DISK_SIZE
+    if fsize == MMB_SIZE:
+        return MMB_MAX_ENTRIES
+    return 0

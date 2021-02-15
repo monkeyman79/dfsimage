@@ -5,6 +5,7 @@ __pycache__
 *.dsd
 *.img
 *.bin
+*.mmb
 img
 builtins.pyi
 out

@@ -15,7 +15,7 @@ from .consts import CATALOG_SECTORS, CATALOG_SECTOR1, CATALOG_SECTOR2, SECTOR_SI
 from .consts import SECTORS, MAX_FILES, SINGLE_SECTORS, DOUBLE_SECTORS
 from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE
 from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO, LIST_FORMAT_RAW
-from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
+from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE, LIST_FORMAT_DCAT
 from .consts import WARN_ALL, WARN_FIRST, WARN_NONE
 
 from .misc import bchr, json_dumps, xml_dumps
@@ -32,8 +32,8 @@ class Side:
     """Represents one side of a floppy image."""
 
     TABLE_FORMAT = (
-        "{image_displayname:15}|{title:12}|{opt_str:4}|"
-        "{number_of_files:2}|"
+        "{displayname:15}|{number_of_files:2}|"
+        "{title:12}|{opt_str:4}|"
         "{sectors:3}|{last_used_sector:3}|{free_bytes:6}|"
         "{max_free_blk:6}|{sha1_files}"
         )
@@ -135,9 +135,8 @@ class Side:
         self.modified = True
         self.csector1[0:8] = vbytes[0:8]  # type: ignore
         self.csector2[0:4] = vbytes[8:12]  # type: ignore
-        if self.image._indexview is not None:
-            self.image._indexview[0:12] = vbytes  # type: ignore
-            self.image._index_modified = True
+        if self.image._mmb_entry is not None:
+            self.image._mmb_entry.title = value
 
     @property
     def sequence_number(self) -> int:
@@ -635,9 +634,7 @@ class Side:
         return self.number_of_files
 
     def __str__(self) -> str:
-        return "<Side %s:%d %dS '%s' %s>" % (self.image.filename, self.head+1,
-                                             self.number_of_sectors,
-                                             self.title, self.sha1)
+        return "Side(%s, %d)" % (self.image, self.head)
 
     def __repr__(self) -> str:
         """Textual representation."""
@@ -656,9 +653,15 @@ class Side:
         isvalid = True
         warnall = warn_mode == WARN_ALL
 
+        # pylint: disable=unused-argument
+        def formatmsg(message: Union[Warning, str]) -> str:
+            return ("%s: %s: %s"
+                    % (type(message).__name__, self.image_displayname, str(message)))
+
         if warn_mode == WARN_NONE:
             simplewarn.mute(ValidationWarning)
 
+        simplewarn.current_format = formatmsg
         try:
 
             if ((isvalid or warnall)
@@ -699,9 +702,17 @@ class Side:
                 self.check_sectors_allocation(warnall)
 
         finally:
+            simplewarn.current_format = simplewarn.formatmsg
             simplewarn.unmute(ValidationWarning)
 
         return isvalid
+
+    @property
+    def image_displayname(self) -> str:
+        """File name of the floppy disk image with MMB index
+           or double sided disk head number appended."""
+        return ("%s:%d" % (self.image.filename, self.head) if self.image.heads > 1
+                else self.image.displayname)
 
     PROPERTY_NAMES = {
         "side": "Floppy disk side number - 1 or 2.",
@@ -721,14 +732,14 @@ class Side:
         "sha1_files": "SHA1 digest of all files on the floppy disk side including "
                       "their names and attributes.",
         "sha1_used": "SHA1 digest of floppy disk side surface excluding unused areas.",
-        "image_path": "Full path of the floppy disk image file.",
-        "image_filename": "File name of the floppy disk image file.",
-        "image_basename": "File name of the floppy disk image file without extension.",
-        "image_index": "Index of the disk image in the MMB file.",
-        "image_displayname": "File name of the floppy disk image with MMB index "
-                             "or double sided disk head number appended.",
-        "image_index_or_head": "Disk image index for MMB file or "
-                               "head number (0 or 1) for double sided disk.",
+        "path": "Full path of the floppy disk image file.",
+        "filename": "File name of the floppy disk image file.",
+        "basename": "File name of the floppy disk image file without extension.",
+        "index": "Index of the disk image in the MMB file.",
+        "displayname": "File name of the floppy disk image with MMB index "
+                       "or double sided disk head number appended.",
+        "index_or_head": "Disk image index for MMB file or "
+                         "head number (0 or 1) for double sided disk.",
         "tracks": "Number of tracks on the floppy disk side.",
         "drive": "Drive number according to DFS: 0 for side 1, 2 for side 2.",
         "head": "Head index: 0 for side 1, 1 for side 2.",
@@ -767,9 +778,18 @@ class Side:
         """
         # pylint: disable=no-member
         if level >= 0:
-            pre_attrs = {}
+            pre_attrs: Dict = {}
+            if level == 0:
+                pre_attrs['path'] = self.image.path
+                pre_attrs['filename'] = self.image.filename
+                if for_format:
+                    pre_attrs['basename'] = self.image.basename
+
             if for_format or not self.image.is_mmb:
                 pre_attrs['side'] = self.head + 1
+            if for_format or self.image.is_mmb:
+                pre_attrs['index'] = self.image.index
+
             attrs = {
                 **pre_attrs,
                 'title': self.title,
@@ -784,26 +804,17 @@ class Side:
                 'sha1_files': LazyString(cast(Property['Side', str], Side.sha1files).fget, self),
                 'sha1_used': LazyString(cast(Property['Side', str], Side.sha1used).fget, self)
                 }
-        # pylint: enable=no-member
-
-        if level == 0:
-            attrs['image_path'] = self.image.path
-            attrs['image_filename'] = self.image.filename
-            if for_format:
-                attrs['image_basename'] = self.image.basename
             if for_format or self.image.is_mmb:
                 mmb_stat = self.image._mmb_status_byte
-                attrs['image_index'] = self.image.index
                 attrs["locked"] = self.image.locked
                 attrs["initialized"] = self.image.initialized
                 attrs["mmb_status_bytes"] = mmb_stat
                 attrs["mmb_status"] = self.image.MMB_STATUS_MAP.get(mmb_stat, 'I')
+        # pylint: enable=no-member
 
         if for_format and level >= 0:
-            attrs['image_displayname'] = ("%s:%d" % (self.image.filename, self.head)
-                                          if self.image.heads > 1
-                                          else self.image.displayname)
-            attrs['image_index_or_head'] = self.image.index if self.image.is_mmb else self.head
+            attrs['displayname'] = self.image_displayname
+            attrs['index_or_head'] = self.image.index if self.image.is_mmb else self.head
 
         if recurse or level < 0:
             file_list = [file.get_properties(for_format=False, level=level+1)
@@ -837,6 +848,16 @@ class Side:
 
         return {**attrs, **redund_attrs}
 
+    def dcat_line(self):
+        """Generate index entry as displayed by *DCAT command."""
+        index = self.image.index if self.image.is_mmb else self.head
+        if self.image.is_mmb:
+            mmb_stat = self.image._mmb_status_byte
+            status = self.image.MMB_STATUS_MAP.get(mmb_stat, 'I')
+        else:
+            status = ''
+        return "%5d %12s %1s" % (index, self.title, status)
+
     def listing_header(self, fmt: Union[int, str] = None,
                        file=sys.stdout) -> None:
         """Print catalog listing header lines according to selected format.
@@ -846,7 +867,8 @@ class Side:
         Args:
             fmt: Optional; Selected format. Value can be one of LIST_FORMAT_...
                 constant or custom formatting string. If fmt in any LIST_FORMAT_...
-                constant other that LIST_FORMAT_CAT and LIST_FORMAT_TABLE, result is empty.
+                constant other that LIST_FORMAT_CAT, LIST_FORMAT_DCAT and
+                LIST_FORMAT_TABLE, result is empty.
                 If fmt is a string, the header is generated with str.format function.
             file: Output stream. Default is sys.stdout.
         Raises:
@@ -863,6 +885,8 @@ class Side:
         elif isinstance(fmt, str):
             attrs = self.get_properties(for_format=True, recurse=False, level=0)
             print(fmt.format_map(cast(Dict[str, object], attrs)), file=file)
+        elif fmt == LIST_FORMAT_DCAT:
+            print(self.dcat_line())
         elif fmt == LIST_FORMAT_CAT:
             print(f'{self.title} ({self.sequence_number:02})', file=file)
             print("%-20s%s" % (f'Drive {drive}', f'Option {self.opt} ({optstr})'), file=file)
@@ -908,6 +932,7 @@ class Side:
             LIST_FORMAT_JSON (4)  - JSON
             LIST_FORMAT_XML (5)   - XML
             LIST_FORMAT_TABLE (6) - Fixed-width text table.
+            LIST_FORMAT_DCAT (7)  - As displayed by MMC *DCAT command.
 
         For list of keys available for custom header formatting string see
         Side.PROPERTY_NAMES.
@@ -967,7 +992,7 @@ class Side:
             for entry in entries:
                 print(entry.listing_entry(fmt), file=file)
 
-        elif fmt != '':
+        elif fmt != '' and fmt != LIST_FORMAT_DCAT:
             raise ValueError("invalid listing format")
 
         if footer_fmt is not None and footer_fmt != '':

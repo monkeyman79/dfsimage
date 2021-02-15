@@ -15,7 +15,7 @@ from .wildparse.argparse import SUPPRESS, CustomHelpFormat
 from .args import MyHelpFormatter
 
 from .consts import LIST_FORMAT_INF, LIST_FORMAT_CAT, LIST_FORMAT_INFO, LIST_FORMAT_RAW
-from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
+from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE, LIST_FORMAT_DCAT
 from .consts import OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING, OPEN_MODE_NEW
 from .consts import WARN_NONE, WARN_ALL
 from .consts import SIZE_OPTION_EXPAND, SIZE_OPTION_SHRINK, SIZE_OPTION_KEEP
@@ -24,13 +24,14 @@ from .consts import TRANSLATION_STANDARD, TRANSLATION_SAFE
 from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE, DIGEST_MODE_DATA
 
 from .conv import bbc_to_unicode, unicode_to_bbc
-from .misc import json_dumps, xml_dumps, get_digest
+from .misc import json_dumps, xml_dumps, get_digest, is_mmb_file
 from .simplewarn import warn
 
 from .sectors import Sectors
 from .entry import Entry
 from .side import Side
 from .image import Image
+from .mmbfile import MMBFile
 
 DESCRIPTION = """BBC Micro Acorn DFS floppy disk image maintenance utility."""
 
@@ -100,6 +101,7 @@ LIST_FORMAT_LONG_HELP = LIST_FORMAT_HELP + """
 * json - JSON format.
 * xml - XML format.
 * table - text table format
+* dcat - As displayed by MMC *DCAT command
 * CUSTOM_FORMAT - Formatting string - e.g. "{fullname:9} {size:06}".
 See `--help-format` for available formatting keys.
 """
@@ -415,20 +417,10 @@ def _conv_format(fmt):
     if not isinstance(fmt, str):
         return fmt
     fmt2 = fmt.lower()
-    if fmt2 == 'cat':
-        fmt = LIST_FORMAT_CAT
-    elif fmt2 == 'info':
-        fmt = LIST_FORMAT_INFO
-    elif fmt2 == 'inf':
-        fmt = LIST_FORMAT_INF
-    elif fmt2 == 'raw':
-        fmt = LIST_FORMAT_RAW
-    elif fmt2 == 'json':
-        fmt = LIST_FORMAT_JSON
-    elif fmt2 == 'xml':
-        fmt = LIST_FORMAT_XML
-    elif fmt2 == 'table':
-        fmt = LIST_FORMAT_TABLE
+    fmt = {'cat': LIST_FORMAT_CAT, 'info': LIST_FORMAT_INFO,
+           'inf': LIST_FORMAT_INF, 'raw': LIST_FORMAT_RAW,
+           'json': LIST_FORMAT_JSON, 'xml': LIST_FORMAT_XML,
+           'table': LIST_FORMAT_TABLE, 'dcat': LIST_FORMAT_DCAT}.get(fmt2, fmt)
     return fmt
 
 
@@ -470,6 +462,37 @@ class _Process:
 
 def _validate_command(namespace, _parser):
     _Process(namespace).run_validate()
+
+
+def _get_mmb(name: str, index: Optional[int]):
+    name2, _, index2 = name.rpartition(":")
+    start = None
+    end = None
+
+    if name2 != '':
+        index2, _, index3 = index2.partition("-")
+        if not index2.isdigit():
+            return None, None, None
+        start = int(index2)
+        if index is not None and index != start:
+            raise ValueError("conflicting index number")
+        if index3 != '':
+            if not index3.isdigit():
+                return None, None, None
+            end = int(index3) + 1
+        else:
+            end = start + 1
+        name = name2
+
+    else:
+        start = index
+        if start is not None:
+            end = start + 1
+
+    if not is_mmb_file(name):
+        return None, None, None
+
+    return name, start, end
 
 
 class _ListProcess(_Process):
@@ -524,41 +547,52 @@ class _ListProcess(_Process):
         elif self.only_images:
             self._enable_only_images()
 
-    def _list_image(self, image):
+    def _list_image(self, image, start: int = None, end: int = None):
+        extra = {}
+        if start is not None:
+            extra["start_index"] = start
+        if end is not None:
+            extra["end_index"] = end
         if self.fmt in (LIST_FORMAT_JSON, LIST_FORMAT_XML):
             if self.only_images:
-                prop = image.get_properties(for_format=False, recurse=False)
+                prop = image.get_properties(for_format=False, recurse=False, **extra)
                 self.tree.append(prop)
             elif self.only_sides:
-                prop = image.get_properties(for_format=False, recurse=False, level=-1)
+                prop = image.get_properties(for_format=False, recurse=False, level=-1, **extra)
                 self.tree.extend(prop)
             elif self.only_files:
                 prop = image.get_properties(for_format=False, recurse=False, level=-2,
                                             pattern=self.pattern, sort=self.sort,
-                                            silent=self.silent)
+                                            silent=self.silent, **extra)
                 self.tree.extend(prop)
             else:
                 prop = image.get_properties(for_format=False, recurse=True,
                                             pattern=self.pattern, sort=self.sort,
-                                            silent=self.silent)
+                                            silent=self.silent, **extra)
                 self.tree.append(prop)
         else:
             image.listing(fmt=self.fmt, pattern=self.pattern, side_header_fmt=self.header_fmt,
                           side_footer_fmt=self.footer_fmt, img_header_fmt=self.img_header_fmt,
-                          img_footer_fmt=self.img_footer_fmt, sort=self.sort, silent=self.silent)
+                          img_footer_fmt=self.img_footer_fmt, sort=self.sort, silent=self.silent,
+                          **extra)
 
     def run_listing(self):
         """Run listing."""
         for params in self.images:
-            try:
-                with _open_from_params(params, for_write=False,
-                                       warn_mode=self.warn_mode) as image:
-                    self._list_image(image)
-            except (OSError, RuntimeError) as err:
-                if not self.cont:
-                    raise
-                warn(err)
-                continue
+            name, start, end = _get_mmb(params["name"], params["index"])
+            if name is not None:
+                with MMBFile.open(name, False) as mmb:
+                    self._list_image(mmb, start, end)
+            else:
+                try:
+                    with _open_from_params(params, for_write=False,
+                                           warn_mode=self.warn_mode) as image:
+                        self._list_image(image)
+                except (OSError, RuntimeError) as err:
+                    if not self.cont:
+                        raise
+                    warn(err)
+                    continue
         if self.fmt == LIST_FORMAT_JSON:
             print(json_dumps(self.tree), end='\n')
         if self.fmt == LIST_FORMAT_XML:
@@ -631,14 +665,20 @@ class _DumpProcess(_Process):
                     prefix += name
             print("%-32s %s" % (prefix, digest))
 
+    def _dump_file(self, image, file):
+        if not self.digest:
+            self.dump(file.readall())
+        else:
+            digest = file.get_digest(self.mode, self.algorithm)
+            self.show_digest(image, file.fullname, file.drive, digest)
+
     def _dump_files(self, image: Image):
         for file_pat in self.files:
             for file in image.get_files(file_pat, silent=self.silent):
-                if not self.digest:
-                    self.dump(file.readall())
-                else:
-                    digest = file.get_digest(self.mode, self.algorithm)
-                    self.show_digest(image, file.fullname, file.drive, digest)
+                self._dump_file(image, file)
+        if len(self.files) == 0:
+            for file in image.get_files():
+                self._dump_file(image, file)
 
     def _dump_all(self, image: Image):
         if not self.digest:
@@ -702,22 +742,53 @@ class _DumpProcess(_Process):
                     name = "[track %d]" % track
                 self.show_digest(image, name, side.drive, digest)
 
+    def _dump_image(self, image):
+        if self.all:
+            self._dump_all(image)
+
+        elif self.sectors is not None and len(self.sectors) != 0:
+            self._dump_sectors(image)
+
+        elif self.tracks is not None and len(self.tracks) != 0:
+            self._dump_tracks(image)
+
+        else:
+            self._dump_files(image)
+
+    def _dump_mmb(self, mmb, start, end):
+        for entry in mmb.all_entries:
+            if start is not None and entry.index < start:
+                continue
+            if end is not None and entry.index >= end:
+                continue
+            if not entry.initialized and (start is None or end is None
+                                          or end != start + 1):
+                continue
+            try:
+                with entry.open(warn_mode=self.warn_mode) as image:
+                    self._dump_image(image)
+            except (OSError, RuntimeError) as err:
+                if not self.cont:
+                    raise
+                warn(err)
+                continue
+
     def run(self):
         "Run dump"
-        with _open_from_params(self.images[0], for_write=False,
-                               warn_mode=self.warn_mode) as image:
-
-            if self.files is not None and len(self.files) != 0:
-                self._dump_files(image)
-
-            if self.all:
-                self._dump_all(image)
-
-            if self.sectors is not None and len(self.sectors) != 0:
-                self._dump_sectors(image)
-
-            if self.tracks is not None and len(self.tracks) != 0:
-                self._dump_tracks(image)
+        for params in self.images:
+            name, start, end = _get_mmb(params["name"], params["index"])
+            if name is not None:
+                with MMBFile.open(name, False) as mmb:
+                    self._dump_mmb(mmb, start, end)
+            else:
+                try:
+                    with _open_from_params(self.images[0], for_write=False,
+                                           warn_mode=self.warn_mode) as image:
+                        self._dump_image(image)
+                except (OSError, RuntimeError) as err:
+                    if not self.cont:
+                        raise
+                    warn(err)
 
 
 def _dump_command(namespace, parser):
@@ -743,10 +814,6 @@ def _digest_command(namespace, parser):
             parser.error("argument --sector: not allowed with argument FILE")
         if namespace.all:
             parser.error("argument --all: not allowed with argument FILE")
-    if ((namespace.files is None or len(namespace.files) == 0)
-            and namespace.track is None and namespace.sector is None
-            and not namespace.all):
-        parser.error("missing argument FILE")
     _DumpProcess(namespace, True).run()
 
 
@@ -1260,9 +1327,6 @@ def _add_global_options(parser, subparser=True, template=False):
         add = global_options.add_argument
         add('-h', '--help', action='help', help=SUPPRESS)
 
-    if subparser:
-        warn_group = global_options.add_mutually_exclusive_group()
-        add = warn_group.add_argument
         parser.set_defaults(warn_mode=None)
         add('--warn', choices=['none', 'first', 'all'],
             help=WARN_LONG_HELP if template else WARN_HELP,
@@ -1275,6 +1339,36 @@ def _add_global_options(parser, subparser=True, template=False):
             action=argparse.BooleanOptionalAction, default=True)  # pylint: disable=no-member
         add('-s', '--silent', action='store_true',
             help="Don't generate error if a file doesn't exist.")
+
+
+def _drecat_command(namespace, _parser):
+    proc = _Process(namespace)
+    for mmb_name in namespace.images:
+        with MMBFile.open(mmb_name, True) as mmb:
+            count = mmb.drecat(proc.warn_mode)
+            if proc.verbose:
+                print("%s: %d entries updated" % (mmb_name, count))
+
+
+def _donboot_command(namespace, _parser):
+    set_onboot = namespace.set_onboot
+    proc = _Process(namespace)
+    for mmb_name in namespace.images:
+        with MMBFile.open(mmb_name, True) as mmb:
+            for drive, index in set_onboot:
+                mmb.onboot[drive] = index
+            if proc.verbose or len(set_onboot) == 0:
+                for i in range(4):
+                    print("%2d:%s" % (i, mmb.all_entries[mmb.onboot[i]]))
+
+
+def _create_mmb_command(namespace, _parser):
+    proc = _Process(namespace)
+    for mmb_name in namespace.images:
+        with MMBFile.create(mmb_name):
+            pass
+        if proc.verbose:
+            print("%s: file created" % mmb_name)
 
 
 PATTERN_HELP = "File name or pattern for listing."
@@ -1307,7 +1401,7 @@ def _add_list_options(parser, index, template=False, group=None):
             help=PATTERN_LONG_HELP if template else PATTERN_HELP,
             nargs=1, action='extend', default=[])
 
-    add('-f', '--list-format', metavar='{cat,info,raw,inf,json,xml,table,CUSTOM_FORMAT}',
+    add('-f', '--list-format', metavar='{cat,info,raw,inf,json,xml,table,dcat,CUSTOM_FORMAT}',
         help=LIST_FORMAT_LONG_HELP if template else LIST_FORMAT_HELP,
         dest="list_format")
     add('--sort', help="Sort files by name.", dest="sort",
@@ -1769,6 +1863,11 @@ def cli(prog=None, argv=None):
                                      formatter_class=MyHelpFormatter,
                                      flexi=True)
 
+    custom_format_no_gnu = CustomHelpFormat(max_help_position=40,
+                                            gnu_style_long_options=False,
+                                            formatter_class=MyHelpFormatter,
+                                            flexi=True)
+
     parser = argparse.ArgumentParser(prog=prog, usage=GLOBAL_USAGE,
                                      description=DESCRIPTION,
                                      formatter_class=custom_format,
@@ -1981,6 +2080,12 @@ def cli(prog=None, argv=None):
     cmd.add_argument("files", nargs="**", metavar="FILE", help="File to process.", action='extend')
     cmd.set_defaults(command=_digest_command)
 
+    cmd = _add_subcommand(subparsers, prog, command="validate",
+                          help="Check disk for errors.",
+                          format=custom_format)
+    _add_image_options(cmd, True, nargs=1, command="validate")
+    cmd.set_defaults(command=_validate_command)
+
     cmd = _add_subcommand(subparsers, prog, command="dkill",
                           help="Mark disk image as uninitialized in the MMB index.",
                           epilog=DKILL_EPILOG,
@@ -1997,11 +2102,32 @@ def cli(prog=None, argv=None):
     _add_image_options(cmd, True, nargs=1, command="drestore")
     cmd.set_defaults(command=_drestore_command)
 
-    cmd = _add_subcommand(subparsers, prog, command="validate",
-                          help="Check disk for errors.",
+    cmd = _add_subcommand(subparsers, prog, command="drecat",
+                          help="Refresh MMB file catalog.",
                           format=custom_format)
-    _add_image_options(cmd, True, nargs=1, command="validate")
-    cmd.set_defaults(command=_validate_command)
+    cmd.add_argument("images", metavar="MMB_FILE",
+                     help="File to process.", action='append')
+    _add_image_arg(cmd, None)
+    cmd.set_defaults(command=_drecat_command)
+
+    cmd = _add_subcommand(subparsers, prog, command="donboot",
+                          help="Display or set images mounted in drives on boot.",
+                          format=custom_format_no_gnu)
+    cmd.add_argument("--set", dest='set_onboot', nargs=2, metavar=('DRIVE', 'IMAGE'),
+                     type=int, help="Set new IMAGE to mount in DRIVE",
+                     action='append', default=[])
+    cmd.add_argument("images", metavar="MMB_FILE",
+                     help="MMB file.", action='append')
+    _add_image_arg(cmd, None)
+    cmd.set_defaults(command=_donboot_command)
+
+    cmd = _add_subcommand(subparsers, prog, command="create-mmb",
+                          help="Create a new MMB file.",
+                          format=custom_format)
+    cmd.add_argument("images", metavar="MMB_FILE",
+                     help="MMB file.", action='append')
+    _add_image_arg(cmd, None)
+    cmd.set_defaults(command=_create_mmb_command)
 
     cmd = argparse.ArgumentParser(prog=prog, usage="%(prog)s COMMAND [options]...", add_help=False,
                                   formatter_class=custom_format,

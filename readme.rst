@@ -9,8 +9,22 @@ maintenance of BBC Micro disk image files. Those files usually have extensions
 `.ssd` - for single sided disk image, or `.dsd` - for double sided disk image.
 
 This package allows indexing contents of the disk images, importing files to and
-exporting from the disk images and modifying disk images in place, such as
-renaming files or changing disk title.
+exporting from the disk images, modifying disk images in place, such as
+renaming files or changing disk title and transferring data between disk images.
+
+The `dfsimage` module also supports MMB files. MMB files are containers for
+large number of `.ssd` disk image, designed for storing disk images on a
+MMC or SD card. All commands that work with `.ssd` can be also used on a disk
+image contained within an MMB file. Index of disk image within MMB file can be
+either specified using `index`__ option, or appended to MMB file name, following
+a colon character, e.g. beeb.mmb:12. Commands |list|_, |dump|_ and |digest|_ can
+take a range of disk images, e.g. beeb.mmb:10-20. In that case command will be
+applied to all *initialized* disk image in specified range.
+
+__ `index-opt`_
+
+There are few commands intended specially for MMB files, such as donboot_ or
+drecat_.
 
 usage
 =====
@@ -46,7 +60,7 @@ Export all files from the 'games.ssd' image to the 'files' directory
 
 .. code-block:: shell-session
 
-  dfsimage export games.ssd -o files/
+  dfsimage export beeb.mmb:12 -o files/
 
 Index all floppy image contents from the 'images' directory to text table file
 
@@ -158,9 +172,12 @@ command list
 .. |unlock| replace:: ``unlock``
 .. |attrib| replace:: ``attrib``
 .. |digest| replace:: ``digest``
+.. |validate| replace:: ``validate``
+.. |create-mmb| replace:: ``create-mmb``
 .. |dkill| replace:: ``dkill``
 .. |drestore| replace:: ``drestore``
-.. |validate| replace:: ``validate``
+.. |drecat| replace:: ``drecat``
+.. |donboot| replace:: ``donboot``
 
 |list|_ (``cat``, ``index``)
   List files or disk image properties.
@@ -196,12 +213,18 @@ command list
   Change existing file attributes.
 |digest|_
   Display digest (hash) of file or sectors contents
+|validate|_
+  Check disk for errors.
+|create-mmb|_
+  Create a new MMB file.
 |dkill|_
   Mark disk image as uninitialized in the MMB index.
 |drestore|_
   Restore disk image marked previously as uninitialized.
-|validate|_
-  Check disk for errors.
+|drecat|_
+  Refresh image titles in MMB file catalog.
+|donboot|_
+  Display or set images mounted in drives on boot.
 
 options
 =======
@@ -458,6 +481,7 @@ List files or disk image properties.
   * ``cat`` - As displayed by ``*CAT`` command
   * ``json`` - JSON
   * ``xml`` - XML
+  * ``dcat`` - As displayed by MMC ``*DCAT`` command
   * ``table`` - Text table. Columns are separated with ``'|'`` character.
   * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{fullname:9} {size:06}"``.
 
@@ -874,6 +898,29 @@ Display digest (hash) of file or sectors contents
 
 |all|_
 
+validate
+--------
+
+Check disk for errors. Runs the same cursory disk check that is executed before
+any other disk operation.
+
+**synopsis**:
+
+.. parsed-literal::
+
+  dfsimage validate [`global options`_] [`image file options`_] IMAGE
+
+create-mmb
+----------
+
+Create a new MMB file.
+
+**synopsis**:
+
+.. parsed-literal::
+
+  dfsimage create-mmb [`global options`_] MMB_FILE
+
 dkill
 -----
 
@@ -914,17 +961,27 @@ Restore disk image marked previously as uninitialized.
 
   dfsimage drestore --dlock -i 302 beeb.mmb
 
-validate
---------
+drecat
+------
 
-Check disk for errors. Runs the same cursory disk check that is executed before
-any other disk operation.
+Refresh image titles in MMB file catalog.
 
 **synopsis**:
 
 .. parsed-literal::
 
-  dfsimage validate [`global options`_] [`image file options`_] IMAGE
+  dfsimage drecat [`global options`_] MMB_FILE
+
+donboot
+-------
+
+Display or set images mounted in drives on boot.
+
+**synopsis**:
+
+.. parsed-literal::
+
+  dfsimage donboot [`global options`_] [--set DRIVE IMAGE]... MMB_FILE
 
 formatting keyword arguments
 ============================
@@ -1004,14 +1061,14 @@ Disk side properties are:
   including their names and attributes.
 * ``sha1_used``            - SHA1 digest of floppy disk side surface excluding
   unused areas.
-* ``image_path``           - Full path of the floppy disk image file.
-* ``image_filename``       - File name of the floppy disk image file.
-* ``image_basename``       - File name of the floppy disk image file without
+* ``path``                 - Full path of the floppy disk image file.
+* ``filename``             - File name of the floppy disk image file.
+* ``basename``             - File name of the floppy disk image file without
   extension.
-* ``image_index``          - Index of the disk image in the MMB file
-* ``image_displayname``    - File name of the floppy disk image with MMB index
+* ``index``                - Index of the disk image in the MMB file
+* ``displayname``          - File name of the floppy disk image with MMB index
   or double sided disk head number appended.
-* ``image_index_or_head``  - Disk image index for MMB file or head number
+* ``index_or_head``        - Disk image index for MMB file or head number
   (0 or 1) for double sided disk.
 * ``tracks``               - Number of tracks on the floppy disk side.
 * ``drive``                - Drive number according to DFS: 0 for side 1, 2 for
@@ -1042,12 +1099,12 @@ command.
 
 Image file properties are:
 
-* ``image_path``           - Full path of the floppy disk image file.
-* ``image_filename``       - File name of the floppy disk image file.
-* ``image_basename``       - File name of the floppy disk image file without
+* ``path``                 - Full path of the floppy disk image file.
+* ``filename``             - File name of the floppy disk image file.
+* ``basename``             - File name of the floppy disk image file without
   extension.
-* ``image_index``          - Index of the disk image in the MMB file.
-* ``image_displayname``    - File name of the floppy disk image with an MMB
+* ``index``                - Index of the disk image in the MMB file.
+* ``displayname``          - File name of the floppy disk image with an MMB
   index appended.
 * ``number_of_sides``      - Number of floppy disk image sides.
 * ``tracks``               - Number of tracks on each side.
@@ -1070,5 +1127,3 @@ development status
 ==================
 
 The package is functionally complete, but lacks tests and Python module documentation.
-
-Support for the MMB files is in progress

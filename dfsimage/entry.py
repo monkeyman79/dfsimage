@@ -9,7 +9,7 @@ from .simplewarn import warn
 from .consts import SECTOR_SIZE, CATALOG_SECTORS
 from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE, DIGEST_MODE_DATA
 from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO, LIST_FORMAT_RAW
-from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
+from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE, LIST_FORMAT_DCAT
 from .misc import bchr, ValidationWarning, LazyString, json_dumps, xml_dumps
 from .conv import bbc_to_unicode, unicode_to_bbc
 
@@ -573,20 +573,20 @@ class Entry:
 
         if level == 0:
             image = self.side.image
-            ids = {
+            ids: Dict = {
                 'image_path': image.path,
                 'image_filename': image.filename,
                 'image_basename': image.basename
             }
             if for_format or not image.is_mmb:
-                attrs['side'] = self.head + 1
+                ids['side'] = self.head + 1
             if for_format or image.is_mmb:
-                attrs['image_index'] = image.index
+                ids['image_index'] = image.index
             if for_format:
-                attrs['image_index_or_head'] = image.index if image.is_mmb else self.side.head
-                attrs['image_displayname'] = ("%s:%d" % (image.filename, self.side.head)
-                                              if image.heads > 1
-                                              else image.displayname)
+                ids['image_index_or_head'] = image.index if image.is_mmb else self.side.head
+                ids['image_displayname'] = ("%s:%d" % (image.filename, self.side.head)
+                                            if image.heads > 1
+                                            else image.displayname)
 
             attrs = {**ids, **attrs}
 
@@ -626,6 +626,7 @@ class Entry:
             LIST_FORMAT_JSON (4)  - JSON
             LIST_FORMAT_XML (5)   - XML
             LIST_FORMAT_TABLE (6) - Fixed-width text table.
+            LIST_FORMAT_DCAT (7)  - Empty (only disk header is displayed)
 
         Args:
             fmt: Optional; Selected format. Value can be one of LIST_FORMAT_...
@@ -656,6 +657,8 @@ class Entry:
             elif fmt == LIST_FORMAT_XML:
                 attrs = self.get_properties(for_format=False, level=0)
                 line = xml_dumps(attrs, "file")
+            elif fmt == LIST_FORMAT_DCAT:
+                line = ''
             else:
                 raise ValueError("invalid listing format")
 
@@ -693,8 +696,7 @@ class Entry:
 
     def __repr__(self) -> str:
         """Textual representation."""
-        return "<Entry %s:%d.#%d:%s>" % (self.side.image.filename, self.side.head*2,
-                                         self.index, self.info)
+        return "Entry %s #%d: %s" % (self.side.image_displayname, self.index, self.info)
 
     def __lt__(self, other: 'Entry') -> bool:
         """Compare based on full file name with capital and lower letters grouped together."""

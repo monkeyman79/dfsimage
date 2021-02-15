@@ -8,7 +8,9 @@ from typing import Protocol, Callable, TypeVar, Tuple, Optional
 from typing import Union, List, Dict
 from typing import overload
 
+from .mmbentry import MMBEntry
 from .sectors import Sectors
+
 from .pattern import ParsedPattern, PatternList, PatternUnion
 
 C_co = TypeVar('C_co', covariant=True)  # pylint: disable = invalid-name
@@ -35,11 +37,9 @@ class ImageProtocol(Protocol):
     mod_seq: int
     current_dir: str
     default_side: int
-    _indexview: Optional[memoryview]
-    _index_modified: bool
     locked: bool
     initialized: bool
-    _mmb_status_byte: int
+    _mmb_entry: Optional[MMBEntry]
     MMB_STATUS_MAP: Dict[int, str]
 
     @property
@@ -47,6 +47,9 @@ class ImageProtocol(Protocol):
 
     @property
     def is_mmb(self) -> bool: ...
+
+    @property
+    def _mmb_status_byte(self) -> int: ...
 
     @property
     def displayname(self) -> str: ...
@@ -142,6 +145,9 @@ class SideProtocol(Protocol):
     number_of_files: int
     number_of_sectors: int
     isvalid: bool
+
+    @property
+    def image_displayname(self) -> str: ...
 
     @property
     def sha1(self) -> str: ...

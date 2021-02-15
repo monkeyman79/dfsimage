@@ -9,31 +9,29 @@ import re
 
 from io import SEEK_SET
 
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Generator
 from typing import Iterator, Tuple, Dict, Set, IO
 from typing import cast, overload
 
-from . import simplewarn
 from .simplewarn import warn
 
 from .consts import SECTORS, SECTOR_SIZE, TRACK_SIZE
 from .consts import SINGLE_TRACKS, DOUBLE_TRACKS, CATALOG_SECTORS
 from .consts import SIZE_OPTION_KEEP, SIZE_OPTION_EXPAND, SIZE_OPTION_SHRINK
 from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO
-from .consts import LIST_FORMAT_RAW
+from .consts import LIST_FORMAT_RAW, LIST_FORMAT_DCAT
 from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
 from .consts import OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING, OPEN_MODE_NEW
 from .consts import WARN_FIRST, WARN_NONE
 from .consts import INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER
 from .consts import TRANSLATION_STANDARD, TRANSLATION_SAFE
 from .consts import MMB_INDEX_ENTRY_SIZE, MMB_INDEX_SIZE
-from .consts import MMB_MAX_ENTRIES, MMB_DISK_SIZE, MMB_SIZE
-from .consts import MMB_STATUS_OFFSET, MMB_STATUS_LOCKED, MMB_STATUS_UNLOCKED
-from .consts import MMB_STATUS_UNINITIALIZED, MMB_STATUS_UNINITIALIZED_MASK
+from .consts import MMB_MAX_ENTRIES, MMB_DISK_SIZE
+from .consts import MMB_STATUS_UNLOCKED
 
 from .misc import bchr, LazyString, json_dumps, xml_dumps
 from .misc import DFSWarning, ValidationWarning
-
+from .misc import is_mmb_file
 from .conv import unicode_to_bbc, NAME_SAFE_TRANS, NAME_STD_TRANS
 
 from .pattern import ParsedPattern, PatternList, PatternUnion
@@ -43,86 +41,533 @@ from .entry import Entry
 from .side import Side
 from .inf import Inf, InfCache, canonpath
 
+from .mmbentry import MMBEntry, MMBFileProtocol
+
+
+class SideProperty:
+    """Proxy property for the default side or all sides."""
+
+    def __init__(self, prop):
+        self.fget = prop.fget
+        self.fset = prop.fset
+
+    def __get__(self, instance: 'Image', owner):
+        if instance._default_head is not None:
+            return self.fget(instance.sides[instance._default_head])
+        return tuple(self.fget(side) for side in instance.sides)
+
+    def __set__(self, instance: 'Image', value):
+        if instance._default_head is not None:
+            self.fset(instance.sides[instance._default_head], value)
+        sides = instance.sides
+        if isinstance(value, (int, str)):
+            raise TypeError("value must be a list because there is no default side")
+
+        if len(sides) != len(value):
+            raise TypeError("value list length doesn't match, "
+                            "value must be a list because there is no default side")
+        for side, val in zip(sides, value):
+            self.fset(side, val)
+
 
 class Image:
     """DFS floppy disk image loaded (or mapped) into memory."""
 
     TABLE_FORMAT = (
-        "{image_displayname:15}|"
+        "{displayname:15}|"
         "{tracks}|{size:6}|"
         "{is_valid:1}|{sha1}"
         )
 
-    def __init__(self, fname: str, heads: int, tracks: int, linear: bool = None,
-                 index: int = None) -> None:
-        """Construct new 'Image' object with allocated bytearray for sectors data.
+    def __init__(self, filename: str, for_write=False,
+                 open_mode: int = None, heads: int = None, tracks: int = None,
+                 linear: bool = None, warn_mode: int = None,
+                 index: Union[int, MMBEntry] = None,
+                 catalog_only=False) -> None:
+        """Open disk image file and construct new 'Image' object.
 
         Args:
-            fname: Image filename
-            heads: Number of floppy sides - 1 or 2.
+            filename: Image filename
+            for_write: Optional; Open image for write.
+            open_mode: Optional; File open mode. Can be one of: OPEN_MODE_ALWAYS - create
+                new or open existing file, OPEN_MODE_NEW - create new file, fail if file
+                already exists, OPEN_MODE_EXISTING - open existing file, fail if file
+                doesn't exist. Default is OPEN_MODE_ALWAYS.
+            heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
             tracks: Number of tracks per side - 80 or 40. Default is 80.
             linear: Optional; This flags is always True for single sided disks.
-                For double sided disks, it indicates, that data for each side is
-                stored continuously as opposed to default layout where track data
-                for each side are interleaved.
-            index: Optional; Entry index in MMB file
+                For double sided disks, it indicates, that data for each side is grouped
+                together as opposed to more popular image format where track data for
+                two sides are interleaved. Default is True for double sided SSD images
+                and False for other double sided disks.
+            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
+                warning for first non-fatal validation error and stop validation, WARN_ALL -
+                display all validation errors, WARN_NONE - don't display validation errors.
+            index: Optional; Image index, required for MMB file, or drive number for double
+                sided disk.
+            catalog_only: Optional; Open only for reading catalog.
+        Raises:
+            RuntimeError: If image file is invalid or the class doesn't like it
+                for some reason.
+            ValueError: If 'heads' or 'tracks' argument has invalid value.
+            ValueError: If 'open_mode' is invalid or 'open_mode' is OPEN_MODE_NEW
+                and 'for_write' is False.
+            FileNotFoundError: File not found and open_mode is OPEN_MODE_EXISTING or
+                for_write is False.
+            FileExistsError: File already exists and open_mode is OPEN_MODE_NEW.
         """
-        if heads not in (1, 2):
-            raise ValueError("invalid number of disc sides")
-        elif heads != 1 and index is not None:
-            raise ValueError("double sided disk invalid for MMB entry")
-
-        if tracks not in (SINGLE_TRACKS, DOUBLE_TRACKS):
-            raise ValueError("invalid number of tracks per side")
-        elif tracks != DOUBLE_TRACKS and index is not None:
-            raise ValueError("40 tracks disk invalid for MMB entry")
-
         self._modified = False
-        self._index_modified = False
-        if heads == 1:
-            self.linear = True
-        elif linear is None:
-            self.linear = False
-        else:
-            self.linear = linear
-        self.heads = heads
-        self.tracks = tracks
-        self.sectors_per_head = self.tracks * SECTORS
-        self._data = bytearray(bchr(0xE5) * (self.heads * self.tracks * TRACK_SIZE))
-        self._dataview = memoryview(self._data)
-        self.path = os.path.abspath(fname)
-        self.filename = os.path.basename(fname)
+
+        filename, index = self._parse_index(filename, index)
+        self.filename = os.path.basename(filename)
+        self.path = os.path.abspath(filename)
         self.basename, _ = os.path.splitext(self.filename)
+        self.is_read_only = not for_write
+        self.is_new_image = False
+        self.catalog_only = catalog_only
+        self.mmb_file: Optional[MMBFileProtocol] = None
+
+        open_mode = self._validate_open_mode(open_mode)
+
+        self.heads = 0
+        self.tracks = 0
+        self.linear = 0
         self.original_size = 0
-        self.sides = tuple(Side(self, head) for head in range(0, self.heads))
+        self._second_catalog_offset = 0
+        self._offset = 0
+        self._mmb_file: Optional[MMBFileProtocol] = None
+        self._mmb_entry: Optional[MMBEntry] = None
+
+        side_index = self._check_mmb_file(open_mode, index)
+        self._get_image_format(heads, tracks, linear)
+        self._validate_image_parameters(side_index)
+
+        self.sectors_per_head = self.tracks * SECTORS
+        # self._data = bytearray(bchr(0xE5) * (self.heads * self.tracks * TRACK_SIZE))
+        data = (bytearray(bchr(0xE5) * (self.heads * self.tracks * TRACK_SIZE))
+                if not self.catalog_only
+                else bytearray(bchr(0xE5) * CATALOG_SECTORS * SECTOR_SIZE))
+        self._dataview = memoryview(data)
+        self._data_offset = 0
+        self._default_head: Optional[int] = side_index if self.heads != 1 else 0
+        if self.catalog_only:
+            if self._default_head is None:
+                raise ValueError("head must be specified for 'catalog_only")
+            self._data_offset = 0 if self._default_head == 0 else self._second_catalog_offset
+        self.sides: Tuple[Side, ...]
+        self.sides = tuple((Side(self, head)
+                            if not self.catalog_only or head == self._default_head
+                            else cast(Side, None))
+                           for head in range(0, self.heads))
         self.isvalid = False  # Until validated
         self.mod_seq = 0
         self.file: Optional[IO[bytes]] = None
-        self.is_read_only = True
-        self.is_new_image = False
-        self._index = index
-        self._offset = 0 if index is None else MMB_INDEX_SIZE + index * MMB_DISK_SIZE
-        self._index_data = None if index is None else bytearray(b'\0' * MMB_INDEX_ENTRY_SIZE)
-        self._indexview = None if index is None else memoryview(cast(bytearray, self._index_data))
-        self._index_offset = None if index is None else (index + 1) * MMB_INDEX_ENTRY_SIZE
         self._current_dir = '$'
-        self._default_head: Optional[int] = None if self.heads != 1 else 0
+        self._load_image(warn_mode, open_mode)
+
+    @classmethod
+    def _parse_index(cls, filename: str,
+                     index: Union[None, int, MMBEntry]) -> Tuple[str, Union[None, int, MMBEntry]]:
+
+        name, _, number = filename.rpartition(':')
+
+        if not (len(name) == 0
+                or any(not 0x30 <= ord(c) <= 0x39 for c in number)):
+            value = int(number)
+            if index is not None and (isinstance(index, MMBEntry) or index != value):
+                raise ValueError("conflicting index number")
+            index = value
+            filename = name
+
+        if (index is not None and not isinstance(index, MMBEntry)
+                and (index < 0 or index >= MMB_MAX_ENTRIES)):
+            raise ValueError("invalid index number")
+
+        return filename, index
+
+    def _validate_open_mode(self, open_mode: Optional[int]) -> int:
+        if open_mode is None:
+            open_mode = OPEN_MODE_ALWAYS
+
+        if (open_mode not in (OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING,
+                              OPEN_MODE_NEW)
+                or open_mode == OPEN_MODE_NEW and self.is_read_only):
+            raise ValueError("invalid open mode")
+
+        if not self.is_read_only and self.catalog_only:
+            raise ValueError("'catalog_only' is invalid with 'for_write'")
+
+        return open_mode
+
+    def _check_mmb_file(self, open_mode: int,
+                        index: Union[None, int, MMBEntry]) -> Optional[int]:
+
+        side_index: Optional[int] = None
+
+        if isinstance(index, MMBEntry):
+            self._mmb_entry = index
+            self._mmb_file = index.owner
+            if self._mmb_file is None:
+                raise ValueError("can't open 'Image' from 'MMBEntry' without file")
+            if not self.is_read_only and self._mmb_file.is_read_only:
+                raise ValueError("MMB file is read-only")
+
+            mmb_count = self._mmb_file.count
+
+        else:
+            self.is_new_image = (not self.is_read_only
+                                 and open_mode != OPEN_MODE_EXISTING
+                                 and not os.path.exists(self.path))
+
+            if not self.is_new_image:
+                self.original_size = os.path.getsize(self.path)
+
+            mmb_count = is_mmb_file(self.path)
+
+        if mmb_count != 0:
+            if self._mmb_entry is None:
+                if index is None:
+                    raise ValueError("index missing for MMB file entry")
+
+                if not isinstance(index, int):
+                    raise ValueError("index must be an 'int'")
+
+                if index >= mmb_count:
+                    raise ValueError("index out of range for MMB file entry")
+
+                self._mmb_entry = MMBEntry(index)
+
+            self._offset = MMB_INDEX_SIZE + self._mmb_entry.index * MMB_DISK_SIZE
+
+        else:
+
+            if index is not None and not isinstance(index, int):
+                raise ValueError("index must be an 'int'")
+
+            side_index = index
+
+            # Refuse to create files with mmb extension
+            if self.filename.lower().endswith(".mmb"):
+                raise ValueError("MMB files cannot be created using Image class")
+
+        return side_index
+
+    def _get_image_format(self, heads: Optional[int],
+                          tracks: Optional[int], linear: Optional[bool]):
+
+        if self._mmb_entry is not None:
+            if heads is not None and heads != 1:
+                raise ValueError("invalid number of sides for MMB file entry")
+            self.heads = 1
+
+            if tracks is not None and tracks != DOUBLE_TRACKS:
+                raise ValueError("invalid number of tracks for MMB file entry")
+            self.tracks = DOUBLE_TRACKS
+
+            self.linear = True
+            self.original_size = MMB_DISK_SIZE
+
+        else:
+            # Default to single side unless file extension is 'dsd' or image is
+            # bigger that max. single sided image
+            self.heads = (heads if heads is not None
+                          else 2 if self.filename.lower().endswith(".dsd")
+                          or self.original_size > TRACK_SIZE * DOUBLE_TRACKS
+                          else 1)
+            # Default to 80 tracks
+            self.tracks = (tracks if tracks is not None
+                           else DOUBLE_TRACKS if self.original_size > TRACK_SIZE
+                           * SINGLE_TRACKS * self.heads
+                           else self._peek_number_of_tracks())
+            # Always linear if single sided
+            self.linear = (False if self.heads == 1
+                           else linear if linear is not None
+                           else self.filename.lower().endswith(".ssd"))
+
+    def _peek_number_of_tracks(self) -> int:
+        if self.is_new_image:
+            return DOUBLE_TRACKS
+
+        if self.original_size < CATALOG_SECTORS * SECTOR_SIZE:
+            raise RuntimeError("%s: disk image too small" % self.filename)
+
+        catalog_data = bytearray(CATALOG_SECTORS * SECTOR_SIZE)
+        with open(self.path, 'rb') as file:
+            file.readinto(catalog_data)  # type: ignore[attr-defined]
+
+        sectors = catalog_data[263] + ((catalog_data[262] & 3) << 8)
+
+        return (SINGLE_TRACKS if sectors == SINGLE_TRACKS * SECTORS
+                else DOUBLE_TRACKS)
+
+    def _validate_image_parameters(self,
+                                   index: Optional[int]):
+        if self.heads not in (1, 2):
+            raise ValueError("invalid number of disc sides")
+
+        if self.tracks not in (SINGLE_TRACKS, DOUBLE_TRACKS):
+            raise ValueError("invalid number of tracks per side")
+
+        if index is not None and index >= self.heads:
+            raise ValueError("invalid index value")
+
+        if not self.is_new_image:
+            # Sanity check - image file size should be multiple of sector size
+            if self.original_size % SECTOR_SIZE != 0:
+                raise RuntimeError("%s: invalid disk image size" % self.filename)
+
+            # Make sure that at least first side catalog sectors are present
+            if self.original_size < CATALOG_SECTORS * SECTOR_SIZE:
+                raise RuntimeError("%s: disk image too small" % self.filename)
+
+            # Sanity check
+            if self.original_size > self.max_size:
+                raise RuntimeError("%s: disk image too big for %s"
+                                   % (self.filename, self._sides_and_tracks_str()))
+
+            # If double sided, make sure second side catalog sectors are present
+            if self.heads == 2:
+                self._second_catalog_offset = (self.tracks * TRACK_SIZE if self.linear
+                                               else TRACK_SIZE)
+                if (self.original_size
+                        < self._second_catalog_offset + CATALOG_SECTORS * SECTOR_SIZE):
+                    raise RuntimeError("%s: disk image too small for %s"
+                                       % (self.filename, self._sides_and_tracks_str()))
+
+    def _load_mmb_entry(self):
+        if self._mmb_entry.owner is None:
+            self.file.seek(self._mmb_entry._offset, SEEK_SET)
+            if self.file.readinto(  # type: ignore[attr-defined]
+                    self._mmb_entry._dataview) != MMB_INDEX_ENTRY_SIZE:
+                raise RuntimeError("unexpected index short read")
+
+    def _load_image(self, warn_mode: Optional[int], open_mode: int):
+
+        try:
+            if self._mmb_file is not None:
+                self.file = self._mmb_file.incref()
+
+            else:
+                mode = ("rb" if self.is_read_only else "xb" if self.is_new_image
+                        else "rb+")
+
+                self.file = open(self.path, mode)
+
+            if self._mmb_entry is not None:
+                self._load_mmb_entry()
+                if (open_mode == OPEN_MODE_EXISTING and not self._mmb_entry.initialized):
+                    raise PermissionError("%s: image is not initialized"
+                                          % self.displayname)
+
+            if self.is_new_image or self.is_mmb and open_mode == OPEN_MODE_NEW:
+                if self.is_mmb:
+                    if self.initialized:
+                        raise PermissionError("%s: image is already initialized"
+                                              % self.displayname)
+                    self.initialized = True
+
+                for side in self.sides:
+                    side.format(self.tracks)
+
+                self.isvalid = True
+                self.save()
+
+            else:
+                self.file.seek(self._offset + self._data_offset, SEEK_SET)
+
+                b_count = self.file.readinto(self._dataview)  # type: ignore[attr-defined]
+
+                if b_count != self.original_size and b_count < len(self._dataview):
+                    raise RuntimeError("%s: unexpected image short read" % self.filename)
+
+                # Validate the image
+                self.validate(warn_mode)
+
+                # Sanity check. Validate the image first to know how to
+                # calculate min_size
+                if self.original_size < self.min_size:
+                    raise RuntimeError("%s: disk image too small" % self.filename)
+
+        except:  # noqa: E722
+            self.close(False)
+            raise
+
+    @classmethod
+    def create(cls, filename: str, heads: int = None, tracks: int = None,
+               linear: bool = None, warn_mode: int = None,
+               index: Union[int, MMBEntry] = None) -> 'Image':
+        """Create new image file.
+
+        Created Image object keeps open file handle to the disk image file, so make sure
+        to call the 'close()' method when your program finishes using the created object,
+        or even better use the 'with' statement.
+
+        Example:
+            ::
+                with Image.create("image.ssd") as image:
+                    image.get_side(0).import(glob.glob("srcdir/*"))
+
+        Args:
+            fname: Image file name.
+            heads: Optional; Number of sides - 1, 2. Default is based on file name.
+            tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
+            linear: Optional; This flags is always True for single sided disks.
+                For double sided disks, it indicates, that data for each side is grouped
+                together as opposed to more popular image format where track data for
+                two sides are interleaved. Default is True for double sided SSD images
+                and False for other double sided disks.
+            index: Optional; Can be used to select default side for created Image
+                object. Valid values are 0 for first side and 1 for second side.
+        Raises:
+            ValueError: If 'heads' or 'tracks' argument has invalid value.
+        Returns:
+            New 'Image' object.
+        """
+        return cls(filename, True, OPEN_MODE_NEW, heads, tracks, linear, warn_mode, index)
+
+    @classmethod
+    def open(cls, filename: str, for_write=False, open_mode: int = None,
+             heads: int = None, tracks: int = None, linear: bool = None,
+             warn_mode: int = None, index: Union[int, MMBEntry] = None,
+             catalog_only=False) -> 'Image':
+        """Open disk image file.
+
+        The Image object create by this function keeps open file handle to the
+        disk image file, so make sure to call the 'close()' method when your
+        program finishes using the created object, or use the 'with' statement.
+
+        Example:
+            ::
+                with Image.open("image.ssd") as image:
+                    image.cat()
+
+        Args:
+            filename: Disk image file name.
+            for_write: Optional; Open image for write.
+            open_mode: Optional; File open mode. Can be one of: OPEN_MODE_ALWAYS - create
+                new or open existing file, OPEN_MODE_NEW - create new file, fail if file
+                already exists, OPEN_MODE_EXISTING - open existing file, fail if file
+                doesn't exist. Default is OPEN_MODE_ALWAYS.
+            heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
+            tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
+            linear: Optional; This flags is always True for single sided disks.
+                For double sided disks, it indicates, that data for each side is grouped
+                together as opposed to more popular image format where track data for
+                two sides are interleaved. Default is True for double sided SSD images
+                and False for other double sided disks.
+            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
+                warning for first non-fatal validation error and stop validation, WARN_ALL -
+                display all validation errors, WARN_NONE - don't display validation errors.
+            index: Optional; Image index, required for MMB file, or drive number for double
+                sided disk.
+            catalog_only: Optional; Open only for reading catalog.
+        Raises:
+            RuntimeError: If image file is invalid or the class doesn't like it
+                for some reason.
+            ValueError: If 'heads' or 'tracks' argument has invalid value.
+            ValueError: If 'open_mode' is invalid or 'open_mode' is OPEN_MODE_NEW
+                and 'for_write' is False.
+            FileNotFoundError: File not found and open_mode is OPEN_MODE_EXISTING or
+                for_write is False.
+            FileExistsError: File already exists and open_mode is OPEN_MODE_NEW.
+        Returns:
+            New 'Image' object.
+        """
+
+        return cls(filename, for_write, open_mode, heads, tracks, linear,
+                   warn_mode, index, catalog_only)
+
+    def save(self, size_option: int = None) -> None:
+        """Write image data back to file.
+
+        Args:
+            size_option: Optional; File size option:
+                - SIZE_OPTION_KEEP (0) - Keep size, possibly expanding as needed.
+                - SIZE_OPTION_EXPAND (1) - Expand to maximum size.
+                - SIZE_OPTION_SHRINK (2) - Shrink to minimum size to include last used sector.
+        """
+        self._not_closed()
+
+        if self.file is None or self.is_read_only:
+            return
+
+        if self.modified:
+            size = (self._get_size_for_save(size_option) if not self.catalog_only
+                    else SECTOR_SIZE * CATALOG_SECTORS)
+
+            self.file.seek(self._offset + self._data_offset, SEEK_SET)
+            self.file.write(self._dataview[:size])
+            if not self.is_mmb and not self.catalog_only and size_option == SIZE_OPTION_SHRINK:
+                self.file.truncate(size)
+
+            self.modified = False
+            self.original_size = size
+
+        entry = self._mmb_entry
+        if entry is not None and entry.modified:
+            self.file.seek(entry._offset, SEEK_SET)
+            self.file.write(entry._dataview)
+            entry.modified = False
+
+    def _need_save(self):
+        if self.is_read_only:
+            return False
+
+        if self.modified:
+            return True
+
+        entry = self._mmb_entry
+        return entry is not None and entry.modified
+
+    def close(self, save: bool = True):
+        """Close and invalidate object.
+
+        Args:
+            save: Optional; Write data back to image file if image is not open
+                for read only, and data has been modified.
+        """
+        if self.file is not None:
+            if save and self._need_save():
+                self.save()
+
+            if self._mmb_file is None:
+                self.file.close()
+            else:
+                self._mmb_file.close()
+
+            self.file = None
+
+            if self.is_new_image and not self.is_mmb and not save:
+                os.remove(self.path)
+
+            self._mmb_file = None
+
+        # self._data = cast(bytearray, None)
+        self._dataview = cast(memoryview, None)
+
+        # This may be redundant, but it won't hurt
+        if self.sides is not None:
+            for side in self.sides:
+                side.csector1 = cast(memoryview, None)
+                side.csector2 = cast(memoryview, None)
+                side.image = cast(ImageProtocol, None)
+            self.sides = cast(Tuple[Side, ...], None)
 
     def _not_closed(self):
-        if self._data is None:
+        if self._dataview is None:
             raise ValueError('image file closed')
 
     @property
     def is_mmb(self) -> bool:
         """Return True if image is contained in MMB file."""
-        return self._offset != 0
+        return self._mmb_entry is not None
 
     @property
     def index(self) -> int:
         """Index of image in an MMB file or 0."""
-        if self._index is None:
+        if self._mmb_entry is None:
             return 0
-        return self._index
+        return self._mmb_entry.index
 
     @property
     def displayname(self) -> str:
@@ -134,66 +579,39 @@ class Image:
     @property
     def locked(self) -> bool:
         """Image locked flag in the MMB index."""
-        if self._indexview is None:
+        if self._mmb_entry is None:
             return False
-        return self._mmb_status_byte == MMB_STATUS_LOCKED
+        return self._mmb_entry.locked
 
     @locked.setter
     def locked(self, value: bool):
-        if self._indexview is None:
+        if self._mmb_entry is None:
             raise PermissionError("not an MMB file")
-
-        if not self.initialized:
-            raise PermissionError("image is not initialized")
-
-        if value:
-            # Lock image
-            self._mmb_status_byte = MMB_STATUS_LOCKED
-        else:
-            # Unlock image
-            self._mmb_status_byte = MMB_STATUS_UNLOCKED
+        if self.is_read_only:
+            raise PermissionError("image open for read only")
+        self._mmb_entry.locked = value
 
     @property
     def initialized(self) -> bool:
         """Disk initialized flag in the MMB index."""
-        if self._indexview is None:
+        if self._mmb_entry is None:
             return True
-
-        return (self._mmb_status_byte & MMB_STATUS_UNINITIALIZED_MASK
-                != MMB_STATUS_UNINITIALIZED)
+        return self._mmb_entry.initialized
 
     @initialized.setter
     def initialized(self, value: bool):
-        if self._indexview is None:
-            raise PermissionError("not an MMB file")
-
-        if value:
-            if not self.initialized:
-                # Activate image
-                self._mmb_status_byte = MMB_STATUS_UNLOCKED
-
-        else:
-            # Deactivate image
-            if self.locked:
-                raise PermissionError("image is locked")
-            self._mmb_status_byte = MMB_STATUS_UNINITIALIZED
-
-    @property
-    def _mmb_status_byte(self) -> int:
-        """MMB index status byte, no questions asked."""
-        if self._indexview is None:
-            return 15
-        return self._indexview[MMB_STATUS_OFFSET]  # type: ignore
-
-    @_mmb_status_byte.setter
-    def _mmb_status_byte(self, value: int):
-        if self._indexview is None:
+        if self._mmb_entry is None:
             raise PermissionError("not an MMB file")
         if self.is_read_only:
             raise PermissionError("image open for read only")
-        if self._indexview[MMB_STATUS_OFFSET] != value:  # type: ignore
-            self._indexview[MMB_STATUS_OFFSET] = value  # type: ignore
-            self._index_modified = True
+        self._mmb_entry.initialized = value
+
+    @property
+    def _mmb_status_byte(self) -> int:
+        """MMB index status byte."""
+        if self._mmb_entry is None:
+            return MMB_STATUS_UNLOCKED
+        return self._mmb_entry.status_byte
 
     @property
     def current_dir(self) -> str:
@@ -299,6 +717,23 @@ class Image:
             self.mod_seq += 1
         self._modified = value
 
+    # pylint: disable=no-member
+
+    title = SideProperty(Side.title)
+    sequence_number = SideProperty(Side.sequence_number)
+
+    # pylint: enable=no-member
+
+    @property
+    def files(self) -> Generator[Entry, None, None]:
+        """Sequence of file entries."""
+        sides = self.default_sides
+        for side in sides:
+            index = 0
+            while index < side.number_of_files:
+                yield side.get_entry(index)
+                index += 1
+
     def track_start(self, head: int, track: int) -> int:
         """Get offset to start of track data.
 
@@ -371,6 +806,11 @@ class Image:
         track, sector = Image.logical_to_physical(logical_sector)
         return self.sector_start(head, track, sector) + SECTOR_SIZE
 
+    def _get_data(self, start: int, end: int) -> memoryview:
+        if start < self._data_offset or end > self._data_offset + len(self._dataview):
+            raise IndexError("access outside loaded data")
+        return self._dataview[start:end]
+
     def _sector(self, head: int, track: int, sector: int) -> memoryview:
         """Get 'memoryview' object to sector data.
 
@@ -396,8 +836,8 @@ class Image:
             raise IndexError("invalid track number")
         if sector < 0 or sector >= SECTORS:
             raise IndexError("invalid sector number")
-        return self._dataview[self.sector_start(head, track, sector):
-                              self.sector_end(head, track, sector)]
+        return self._get_data(self.sector_start(head, track, sector),
+                              self.sector_end(head, track, sector))
 
     def _logical_sector(self, head: int, logical_sector: int) -> memoryview:
         """Get 'memoryview' object to sector data by logical sector number.
@@ -443,7 +883,7 @@ class Image:
             raise IndexError("invalid track number")
         track_start = self.track_start(head, track)
         track_end = self.track_end(head, track)
-        return self._dataview[track_start:track_end]
+        return self._get_data(track_start, track_end)
 
     def _validate_sectors(self, head: int, start_track: int, start_sector: int,
                           end_track: int, end_sector: int):
@@ -497,14 +937,14 @@ class Image:
             start = self.sector_start(head, start_track, start_sector)
             end = self.sector_start(head, end_track, end_sector)
             if start != end:
-                chunks.append(self._dataview[start:end])
+                chunks.append(self._get_data(start, end))
 
         else:
             # Go though all tracks but last and append data chunks
             while start_track != end_track:
                 start = self.sector_start(head, start_track, start_sector)
                 end = self.sector_start(head, start_track, SECTORS)
-                dataview = self._dataview[start:end]
+                dataview = self._get_data(start, end)
                 if len(dataview) != 0:
                     chunks.append(dataview)
                 count += SECTORS - start_sector
@@ -514,7 +954,7 @@ class Image:
             if start_sector != end_sector:
                 start = self.sector_start(head, start_track, start_sector)
                 end = self.sector_start(head, start_track, end_sector)
-                dataview = self._dataview[start:end]
+                dataview = self._get_data(start, end)
                 if len(dataview) != 0:
                     chunks.append(dataview)
                 count += end_sector - start_sector
@@ -621,10 +1061,8 @@ class Image:
     def __str__(self) -> str:
         """Get string representation of Image."""
         if self.file is None:
-            return "<Image %s %dS %dT closed>" % (self.displayname, self.heads,
-                                                  self.tracks)
-        return "<Image %s %dS %dT %s>" % (self.displayname, self.heads, self.tracks,
-                                          self.sha1)
+            return "Image('%s') [closed]" % self.displayname
+        return "Image('%s', for_write=%s)" % (self.displayname, not self.is_read_only)
 
     def __repr__(self) -> str:
         """Textual representation."""
@@ -641,8 +1079,8 @@ class Image:
             ellipsis: Optional; If ellipsis is True, repeating lines will be skipped.
             file: Output stream. Default is sys.stdout.
         """
-        Sectors.hexdump_buffer(self._data, start, size, width, ellipsis,
-                               file=file)
+        Sectors.hexdump_buffer(self._get_data(0, self._get_size_for_save()), start,
+                               size, width, ellipsis, file=file)
 
     @staticmethod
     def logical_to_physical(sector: int) -> Tuple[int, int]:
@@ -676,11 +1114,10 @@ class Image:
             raise IndexError("invalid sector number")
         return track * SECTORS + sector
 
-    @staticmethod
-    def _sides_and_tracks_str(heads: int, tracks: int) -> str:
+    def _sides_and_tracks_str(self) -> str:
         """Format string describing disk physical properties for error messages."""
-        return "%d side%s %d tracks" % (heads,
-                                        "" if heads == 1 else "s", tracks)
+        return "%d side%s %d tracks" % (self.heads,
+                                        "" if self.heads == 1 else "s", self.tracks)
 
     def validate(self, warn_mode: int = None) -> bool:
         """Validate disk image.
@@ -699,11 +1136,13 @@ class Image:
             warn_mode = WARN_FIRST
 
         if warn_mode != WARN_NONE and not self.initialized:
-            warn(ValidationWarning("image is not initialized"))
+            warn(ValidationWarning("%s: image is not initialized"
+                                   % self.displayname))
 
         # Validate both sides
         for side in self.sides:
-            isvalid &= side.validate(warn_mode)
+            if not self.catalog_only or side.head == self._default_head:
+                isvalid &= side.validate(warn_mode)
 
         self.isvalid = isvalid
 
@@ -849,13 +1288,13 @@ class Image:
         return head_list
 
     PROPERTY_NAMES = {
-        "image_path": "Full path of the floppy disk image file.",
-        "image_filename": "File name of the floppy disk image file.",
-        "image_basename": "File name of the floppy disk image file without "
-                          "extension.",
-        "image_index": "Index of the disk image in the MMB file.",
-        "image_displayname": "File name of the floppy disk image with an MMB "
-                             "index appended.",
+        "path": "Full path of the floppy disk image file.",
+        "filename": "File name of the floppy disk image file.",
+        "basename": "File name of the floppy disk image file without "
+                    "extension.",
+        "index": "Index of the disk image in the MMB file.",
+        "displayname": "File name of the floppy disk image with an MMB "
+                       "index appended.",
         "number_of_sides": "Number of floppy disk image sides.",
         "tracks": "Number of tracks on each side.",
         "size": "Current disk image size.",
@@ -873,7 +1312,7 @@ class Image:
         "sha1": "SHA1 digest of the entire disk image file."
     }
 
-    MMB_STATUS_MAP = {0: 'L', 15: '', 240: 'U'}
+    MMB_STATUS_MAP = {0: 'P', 15: '', 240: 'U'}
 
     def get_properties(self, for_format: bool, recurse: bool,
                        level: int = 0,
@@ -899,32 +1338,34 @@ class Image:
         self._not_closed()
 
         if level >= 0:
-            attrs = {
-                'image_path': self.path,
-                'image_filename': self.filename,
-                'number_of_sides': self.heads,
-                'tracks': self.tracks,
-                'size': self._get_size_for_save(SIZE_OPTION_KEEP),
-                'min_size': self.min_size,
-                "max_size": self.max_size,
-                "is_valid": self.isvalid,
-                "is_linear": self.linear,
-                "sha1": LazyString(cast(Property['Image', str],  # pylint: disable=no-member
-                                        Image.sha1).fget, self)
-                }
+            attrs: Dict = {
+                'path': self.path,
+                'filename': self.filename
+            }
+            if not self.is_mmb or for_format:
+                attrs['number_of_sides'] = self.heads
+                attrs['tracks'] = self.tracks
+                attrs['size'] = self._get_size_for_save(SIZE_OPTION_KEEP)
+                attrs['min_size'] = self.min_size
+                attrs['max_size'] = self.max_size
+                attrs['is_linear'] = self.linear
+                attrs['is_valid'] = self.isvalid
+            attrs["sha1"] = LazyString(cast(Property['Image', str],  # pylint: disable=no-member
+                                            Image.sha1).fget, self)
             if self.is_mmb or for_format:
-                mmb_stat = self._mmb_status_byte
-                attrs["image_index"] = self.index
-                attrs["locked"] = self.locked
-                attrs["initialized"] = self.initialized
-                attrs["mmb_status_bytes"] = mmb_stat
-                attrs["mmb_status"] = self.MMB_STATUS_MAP.get(mmb_stat, 'I')
+                if not recurse:
+                    mmb_stat = self._mmb_status_byte
+                    attrs["index"] = self.index
+                    attrs["locked"] = self.locked
+                    attrs["initialized"] = self.initialized
+                    attrs["mmb_status_bytes"] = mmb_stat
+                    attrs["mmb_status"] = self.MMB_STATUS_MAP.get(mmb_stat, 'I')
 
             if not for_format:
                 attrs["sha1"] = str(attrs["sha1"])
             if for_format:
-                attrs["image_basename"] = self.basename
-                attrs["image_displayname"] = self.displayname
+                attrs["basename"] = self.basename
+                attrs["displayname"] = self.displayname
 
         if recurse or level < 0:
             parsed = self.compile_pattern(pattern)
@@ -971,7 +1412,7 @@ class Image:
             print(fmt.format_map(cast(Dict[str, object], attrs)), file=file)
         elif fmt not in (LIST_FORMAT_RAW, LIST_FORMAT_INFO,
                          LIST_FORMAT_INF, LIST_FORMAT_CAT,
-                         LIST_FORMAT_JSON, LIST_FORMAT_XML):
+                         LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_DCAT):
             raise ValueError("invalid listing format")
 
     def listing(self, fmt: Union[int, str] = None,
@@ -994,6 +1435,7 @@ class Image:
             LIST_FORMAT_JSON (4)  - Generate JSON
             LIST_FORMAT_XML (5)   - Generate XML
             LIST_FORMAT_TABLE (6) - Fixed-width text table.
+            LIST_FORMAT_DCAT (7)  - As displayed by MMC *DCAT command.
 
         For list of keys available for custom image header formatting string see
         Image.PROPERTY_NAMES.
@@ -1005,7 +1447,7 @@ class Image:
         Entry.PROPERTY_NAMES.
 
         Args:
-            fmt: Optional; Selected file entry format. Value can be one of
+            fmt: Optional; Listing format. Value can be one of
                 LIST_FORMAT_... constants or custom formatting string.
             pattern: Optional; List only files matching pattern (see Entry.match).
             side_header_fmt: Optional; Selected side listing header format.
@@ -1085,8 +1527,8 @@ class Image:
         if algorithm is None:
             algorithm = 'sha1'
         size = self._get_size_for_save()
-        data = self._data[0:self.original_size]
-        return hashlib.new(algorithm, data[:size],
+        data = self._get_data(0, size)
+        return hashlib.new(algorithm, data,
                            usedforsecurity=False).hexdigest()  # type: ignore[call-arg]
 
     @property
@@ -1613,32 +2055,21 @@ class Image:
         """Set disk status in MMB file to uninitialized."""
         self._not_closed()
 
-        if self._indexview is None:
+        if self._mmb_entry is None:
             raise PermissionError("not an MMB file")
 
-        # Deactivate disk in the MMB index
-        if not self.initialized:
-            warn(DFSWarning("image already uninitialized"))
-            return False
-
-        self.initialized = False
-        return True
+        return self._mmb_entry.dkill()
 
     def drestore(self, warn_mode: int = None) -> bool:
-        """Set disk status in MMB file to uninitialized."""
+        """Set disk status in MMB file to initialized."""
         self._not_closed()
 
-        if self._indexview is None:
+        if self._mmb_entry is None:
             raise PermissionError("not an MMB file")
 
-        # Activate disk in the MMB index
-        if self.initialized:
-            warn(DFSWarning("image already initialized"))
-            return False
-
-        self.initialized = True
+        result = self._mmb_entry.drestore()
         self.validate(warn_mode)
-        return True
+        return result
 
     def format(self) -> None:
         """Format default side or both sides."""
@@ -1651,9 +2082,12 @@ class Image:
         d_side = self._default_head
         if d_side is not None:
             self.get_side(d_side).format()
+            if self.heads == 1:
+                self.isvalid = True
         else:
             for side in self.sides:
                 side.format()
+            self.isvalid = True
 
     def _validate_copy_over(self, source: 'Image', default_head: Optional[int]):
 
@@ -1667,8 +2101,8 @@ class Image:
         # Source and destination can be the same file if we copy from one side to the other
         if os.path.sameopenfile(self.file.fileno(),  # type: ignore[union-attr]
                                 source.file.fileno()):  # type: ignore[union-attr]
-            if not self.is_mmb:
-                if self._index == source._index:
+            if self.is_mmb:
+                if self.index == source.index:
                     raise ValueError("source and destination is the same image file")
             elif (default_head is None or source._default_head is None or
                     default_head == source._default_head):
@@ -1792,405 +2226,6 @@ class Image:
             warn(DFSWarning("%s: %d files not copied"
                             % (self.displayname, len(files) - count)))
         return count
-
-    @classmethod
-    def _get_create_defaults(cls, fname: str, heads: Optional[int],
-                             tracks: Optional[int], linear: Optional[bool],
-                             index: Optional[int]) -> Tuple[int, int, bool]:
-        # Default to single side if file extension is not 'dsd'
-        if heads is None:
-            if fname.lower().endswith(".dsd"):
-                heads = 2
-            else:
-                heads = 1
-
-        # Refuse to create files with mmb extension
-        if fname.lower().endswith(".mmb"):
-            raise ValueError("MMB files cannot be created from Image class")
-
-        # Validate index parameter before creating image
-        if index is not None and index >= heads:
-            raise ValueError("invalid index value")
-
-        # Default to 80 tracks
-        if tracks is None:
-            tracks = DOUBLE_TRACKS
-
-        # Dual sided images with ssd extension are linear by default
-        if linear is None:
-            linear = bool(fname.lower().endswith(".ssd"))
-
-        # Single sided images are always linear
-        if heads == 1:
-            linear = True
-
-        return heads, tracks, linear
-
-    @classmethod
-    def create(cls, fname: str, heads: int = None, tracks: int = None,
-               linear: bool = None, index: int = None) -> 'Image':
-        """Create new image file.
-
-        Created Image object keeps open file handle to the disk image file, so make sure
-        to call the 'close()' method when your program finishes using the created object,
-        or even better use the 'with' statement.
-
-        Example:
-            ::
-                with Image.create("image.ssd") as image:
-                    image.get_side(0).import(glob.glob("srcdir/*"))
-
-        Args:
-            fname: Image file name.
-            heads: Optional; Number of sides - 1, 2. Default is based on file name.
-            tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
-            linear: Optional; This flags is always True for single sided disks.
-                For double sided disks, it indicates, that data for each side is grouped
-                together as opposed to more popular image format where track data for
-                two sides are interleaved. Default is True for double sided SSD images
-                and False for other double sided disks.
-            index: Optional; Can be used to select default side for created Image
-                object. Valid values are 0 for first side and 1 for second side.
-        Raises:
-            ValueError: If 'heads' or 'tracks' argument has invalid value.
-        Returns:
-            New 'Image' object.
-        """
-        heads, tracks, linear = cls._get_create_defaults(fname, heads, tracks, linear, index)
-
-        new_image = cls(fname, heads, tracks, linear)
-        try:
-            new_image.original_size = 0
-            new_image.isvalid = True
-
-            new_image.is_read_only = False
-            for side in new_image.sides:
-                side.format(tracks)
-
-            new_image.file = open(fname, "xb")
-            new_image.is_new_image = True
-            if index is not None:
-                new_image._default_head = index
-        except:  # noqa: E722
-            new_image.close()
-            raise
-
-        return new_image
-
-    @classmethod
-    def _peek_number_of_tracks(cls, fname) -> int:
-        catalog_data = bytearray(CATALOG_SECTORS * SECTOR_SIZE)
-        with open(fname, 'rb') as file:
-            file.readinto(catalog_data)  # type: ignore[attr-defined]
-        sectors = catalog_data[263] + ((catalog_data[262] & 3) << 8)
-        if sectors == SINGLE_TRACKS * SECTORS:
-            return SINGLE_TRACKS
-        return DOUBLE_TRACKS
-
-    @classmethod
-    def _get_open_defaults(cls, fname: str, fsize: int,
-                           heads: Optional[int], tracks: Optional[int],
-                           linear: Optional[bool]) -> Tuple[int, int, bool]:
-
-        # Make sure that at least first side catalog sectors are present
-        if fsize < CATALOG_SECTORS * SECTOR_SIZE:
-            raise RuntimeError("disk image too small")
-
-        if heads is not None and (heads < 1 or heads > 2):
-            raise ValueError("invalid number of disc sides")
-
-        # Sanity check - image file size should be multiple of sector size
-        if fsize % SECTOR_SIZE != 0:
-            raise RuntimeError("invalid disk image size")
-
-        # Default to single side unless file extension is 'dsd' or image is bigger that
-        # max. single sided image
-        if heads is None:
-            heads = (2 if fname.lower().endswith(".dsd") or fsize > TRACK_SIZE * DOUBLE_TRACKS
-                     else 1)
-
-        # Default to 80 tracks
-        if tracks is None:
-            tracks = (DOUBLE_TRACKS if fsize > SINGLE_TRACKS * TRACK_SIZE * heads
-                      else cls._peek_number_of_tracks(fname))
-
-        # Dual sided images with 'ssd' extension are linear by default
-        if linear is None:
-            linear = fname.lower().endswith(".ssd")
-
-        # Single sided images are always linear
-        if heads == 1:
-            linear = False
-
-        return heads, tracks, linear
-
-    @classmethod
-    def _get_image_format(cls, fname: str, heads: Optional[int],
-                          tracks: Optional[int],
-                          linear: Optional[bool]) -> Tuple[int, int, int, bool, bool]:
-
-        fsize = os.path.getsize(fname)
-        mmb = False
-
-        if fsize == MMB_SIZE:
-            if heads is not None and heads != 1:
-                raise ValueError("double sided disks are for MMB file entry")
-            heads = 1
-            if tracks is not None and tracks != DOUBLE_TRACKS:
-                raise ValueError("invalid number of tracks for MMB file entry")
-            tracks = DOUBLE_TRACKS
-            mmb = True
-            fsize = MMB_DISK_SIZE
-
-        elif fname.lower().endswith(".mmb"):
-            raise ValueError("invalid MMB file size")
-
-        heads, tracks, linear = cls._get_open_defaults(fname, fsize, heads, tracks, linear)
-
-        # If double sided, make sure second side catalog sectors are present
-        if heads == 2:
-            if not linear:
-                if fsize < TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
-                    raise RuntimeError("disk image too small for %s"
-                                       % Image._sides_and_tracks_str(heads, tracks))
-            else:
-                if fsize < tracks * TRACK_SIZE + CATALOG_SECTORS * SECTOR_SIZE:
-                    raise RuntimeError("disk image too small for linear %s"
-                                       % Image._sides_and_tracks_str(heads, tracks))
-
-        return fsize, heads, tracks, linear, mmb
-
-    def _load_image(self, for_write: bool, warn_mode: Optional[int],
-                    default_head: Optional[int]):
-        # Sanity check
-        if self.original_size > self.max_size:
-            raise RuntimeError("disk image too big for %s" %
-                               Image._sides_and_tracks_str(self.heads, self.tracks))
-
-        self.is_read_only = not for_write
-
-        mode_str = "rb+" if for_write else "rb"
-        self.file = open(self.path, mode_str)
-        self.file.seek(self._offset, SEEK_SET)
-        if self.file.readinto(  # type: ignore[attr-defined]
-                self._data) != self.original_size:
-            raise RuntimeError("unexpected image short read")
-
-        if self._index_offset is not None and self._index_data is not None:
-            self.file.seek(self._index_offset, SEEK_SET)
-            if self.file.readinto(  # type: ignore[attr-defined]
-                    self._index_data) != MMB_INDEX_ENTRY_SIZE:
-                raise RuntimeError("unexpected index short read")
-
-        # Validate the image
-        self.validate(warn_mode)
-
-        # Sanity check. Validate the image first to know how to calculate min_size
-        if self.original_size < self.min_size:
-            raise RuntimeError("disk image too small")
-
-        if default_head is not None:
-            self._default_head = default_head
-
-    @classmethod
-    def _load(cls, filename: str, for_write: bool,
-              heads: Optional[int], tracks: Optional[int],
-              linear: Optional[bool], warn_mode: Optional[int],
-              index: Optional[int]) -> 'Image':
-        """Open file handle and load image file.
-
-        Args:
-            filename: File name.
-            for_write: Optional; Open image for write.
-            heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
-            tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
-            linear: Optional; This flags is always True for single sided disks.
-                For double sided disks, it indicates, that data for each side is grouped
-                together as opposed to more popular image format where track data for
-                two sides are interleaved. Default is True for double sided SSD images
-                and False for other double sided disks.
-            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
-                warning for first non-fatal validation error and stop validation, WARN_ALL -
-                display all validation errors, WARN_NONE - don't display validation errors.
-        Raises:
-            RuntimeError: If image file is invalid or the class doesn't like it
-                for some reason.
-            ValueError: If 'heads' or 'tracks' argument has invalid value.
-        Returns:
-            New 'Image' object.
-        """
-        # pylint: disable=protected-access
-        fname_base = os.path.basename(filename)
-        fname = os.path.abspath(filename)
-
-        # pylint: disable=unused-argument
-        def formatmsg(message: Union[Warning, str]) -> str:
-            return "%s: %s: %s" % (type(message).__name__, fname_base, str(message))
-
-        try:
-            simplewarn.current_format = formatmsg
-
-            fsize, heads, tracks, linear, mmb = cls._get_image_format(fname, heads,
-                                                                      tracks, linear)
-
-            if mmb and index is None:
-                raise ValueError("index missing for MMB file entry")
-            if not mmb and index is not None and index >= heads:
-                raise ValueError("invalid index value")
-
-            # Create new 'Image' object and read file contents
-            new_image = cls(fname, heads, tracks, linear, index if mmb else None)
-            try:
-                new_image.original_size = fsize
-
-                new_image._load_image(for_write, warn_mode, None if mmb else index)
-
-            except:  # noqa: E722
-                new_image.close(False)
-                raise
-
-        except RuntimeError as err:
-            if len(err.args) > 0:
-                err.args = (fname_base + ": " + err.args[0], )
-            raise
-
-        finally:
-            simplewarn.current_format = simplewarn.formatmsg
-
-        return new_image
-
-    @classmethod
-    def _parse_index(cls, filename: str, index: Optional[int]) -> Tuple[Optional[int], str]:
-        name, _, number = filename.rpartition(':')
-        if len(name) == 0 or any(
-                not 0x30 <= ord(c) <= 0x39 for c in number):
-            return index, filename
-
-        value = int(number)
-        if index is not None and index != value:
-            raise ValueError("conflicting index number")
-
-        return value, name
-
-    @classmethod
-    def open(cls, filename: str, for_write: bool = False, open_mode: int = None,
-             heads: int = None, tracks: int = None, linear: bool = None,
-             warn_mode: int = None, index: int = None) -> 'Image':
-        """Open disk image file.
-
-        Created Image object keeps open file handle to the disk image file, so make sure
-        to call the 'close()' method when your program finishes using the created object,
-        or even better use the 'with' statement.
-
-        Example:
-            ::
-                with Image.open("image.ssd") as image:
-                    image.cat()
-
-        Args:
-            filename: Disk image file name.
-            for_write: Optional; Open image for write.
-            open_mode: Optional; File open mode. Can be one of: OPEN_MODE_ALWAYS - create
-                new or open existing file, OPEN_MODE_NEW - create new file, fail if file
-                already exists, OPEN_MODE_EXISTING - open existing file, fail if file
-                doesn't exist. Default is OPEN_MODE_ALWAYS.
-            heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
-            tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
-            linear: Optional; This flags is always True for single sided disks.
-                For double sided disks, it indicates, that data for each side is grouped
-                together as opposed to more popular image format where track data for
-                two sides are interleaved. Default is True for double sided SSD images
-                and False for other double sided disks.
-            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
-                warning for first non-fatal validation error and stop validation, WARN_ALL -
-                display all validation errors, WARN_NONE - don't display validation errors.
-            index: Optional; Image index, required for MMB file, or drive number for double
-                sided disk.
-        Raises:
-            RuntimeError: If image file is invalid or the class doesn't like it
-                for some reason.
-            ValueError: If 'heads' or 'tracks' argument has invalid value.
-            ValueError: If 'open_mode' is invalid or 'open_mode' is OPEN_MODE_NEW
-                and 'for_write' is False.
-            FileNotFoundError: File not found and open_mode is OPEN_MODE_EXISTING or
-                for_write is False.
-            FileExistsError: File already exists and open_mode is OPEN_MODE_NEW.
-        Returns:
-            New 'Image' object.
-        """
-        if open_mode is None:
-            open_mode = OPEN_MODE_ALWAYS
-
-        if (open_mode not in (OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING, OPEN_MODE_NEW) or
-                open_mode == OPEN_MODE_NEW and not for_write):
-            raise ValueError("invalid open mode")
-
-        index, filename = cls._parse_index(filename, index)
-
-        if index is not None and (index < 0 or index >= MMB_MAX_ENTRIES):
-            raise ValueError("invalid index number")
-
-        if open_mode != OPEN_MODE_NEW:
-            try:
-                return cls._load(filename, for_write, heads, tracks, linear, warn_mode, index)
-            except FileNotFoundError:
-                if open_mode == OPEN_MODE_EXISTING or not for_write:
-                    raise
-
-        return cls.create(filename, heads, tracks, linear, index)
-
-    def save(self, size_option: int = None) -> None:
-        """Write image data back to file.
-
-        Args:
-            size_option: Optional; File size option:
-                - SIZE_OPTION_KEEP (0) - Keep size, possibly expanding as needed.
-                - SIZE_OPTION_EXPAND (1) - Expand to maximum size.
-                - SIZE_OPTION_SHRINK (2) - Shrink to minimum size to include last used sector.
-        """
-        self._not_closed()
-        if self.file is None or self.is_read_only:
-            return
-        if self.modified:
-            size = self._get_size_for_save(size_option)
-            self.file.seek(self._offset, SEEK_SET)
-            self.file.write(self._data[:size])
-            if not self.is_mmb and size_option == SIZE_OPTION_SHRINK:
-                self.file.truncate(size)
-            self.modified = False
-            self.original_size = size
-        if (self._index_modified and self._index_offset is not None
-                and self._index_data is not None):
-            self.file.seek(self._index_offset, SEEK_SET)
-            self.file.write(self._index_data)
-            self._index_modified = False
-
-    def close(self, save: bool = True):
-        """Close and invalidate object.
-
-        Args:
-            save: Optional; Write data back to image file if image is not open
-                for read only, and data has been modified.
-        """
-        if self.file is not None:
-            if save and not self.is_read_only and (
-                    self.modified or self._index_modified):
-                self.save()
-            self.file.close()
-            self.file = None
-            if self.is_new_image and not save:
-                os.remove(self.path)
-
-        self._data = cast(bytearray, None)
-        self._dataview = cast(memoryview, None)
-
-        # This may be redundant, but it won't hurt
-        if self.sides is not None:
-            for side in self.sides:
-                side.csector1 = cast(memoryview, None)
-                side.csector2 = cast(memoryview, None)
-                side.image = cast(ImageProtocol, None)
-            self.sides = cast(Tuple[Side, ...], None)
 
     def __enter__(self):
         return self
