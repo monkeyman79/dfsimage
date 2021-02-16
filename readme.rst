@@ -5,26 +5,26 @@ dfsimage
 **BBC Micro Acorn DFS floppy disk image maintenance utility**
 
 This package contains a command-line utility and a Python module dedicated for
-maintenance of BBC Micro disk image files. Those files usually have extensions
-`.ssd` - for single sided disk image, or `.dsd` - for double sided disk image.
+maintenance of **BBC Micro** disk image files. Those files usually have extensions
+*.ssd* - for single sided disk image, or *.dsd* - for double sided disk image.
 
 This package allows indexing contents of the disk images, importing files to and
 exporting from the disk images, modifying disk images in place, such as
 renaming files or changing disk title and transferring data between disk images.
 
-The `dfsimage` module also supports MMB files. MMB files are containers for
+The ``dfsimage`` module also supports *MMB* files. *MMB* files are containers for
 large number of `.ssd` disk image, designed for storing disk images on a
-MMC or SD card. All commands that work with `.ssd` can be also used on a disk
+MMC or SD card. All commands that work with *.ssd* FILES can be also used on a disk
 image contained within an MMB file. Index of disk image within MMB file can be
 either specified using `index`__ option, or appended to MMB file name, following
-a colon character, e.g. beeb.mmb:12. Commands |list|_, |dump|_ and |digest|_ can
-take a range of disk images, e.g. beeb.mmb:10-20. In that case command will be
+a colon character, e.g. ``beeb.mmb:12``. Commands |list|_, |dump|_ and |digest|_ can
+take a range of disk images, e.g. ``beeb.mmb:10-20``. In that case command will be
 applied to all *initialized* disk image in specified range.
 
-__ `index-opt`_
+There are few commands intended specially for MMB files, such as |donboot|_ or
+|drecat|_.
 
-There are few commands intended specially for MMB files, such as donboot_ or
-drecat_.
+__ index-opt_
 
 usage
 =====
