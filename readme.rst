@@ -13,13 +13,13 @@ exporting from the disk images, modifying disk images in place, such as
 renaming files or changing disk title and transferring data between disk images.
 
 The ``dfsimage`` module also supports *MMB* files. *MMB* files are containers for
-large number of ``.ssd`` disk images, designed for storing disk images on a
+large number of *.ssd* disk images, designed for storing disk images on a
 MMC or SD card. All commands that work with *.ssd* FILES can be also used on a disk
-image contained within an MMB file. Index of disk image within MMB file can be
-either specified using `index`__ option, or appended to MMB file name, following
+image contained within an MMB file. Index of a disk image within an MMB file can be
+either specified using `index`__ option, or appended to the MMB file name, following
 a colon character, e.g. ``beeb.mmb:12``. Commands |list|_, |dump|_ and |digest|_ can
-take a range of disk images, e.g. ``beeb.mmb:10-20``. In that case command will be
-applied to all *initialized* disk image in specified range.
+take a range of disk images, e.g. ``beeb.mmb:10-20`` or entire *MMB* file. In that
+case command will be applied to all *initialized* disk image in the specified range.
 
 There are few commands intended specially for MMB files, such as |donboot|_ or
 |drecat|_.
