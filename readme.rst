@@ -56,7 +56,7 @@ Import all files from the 'files' directory to a new image 'games.ssd'
 
   dfsimage import --new games.ssd --title="GAMES" files/*
 
-Export all files from the 'games.ssd' image to the 'files' directory
+Export all files from the disk image at index 12 in 'beeb.mmb' file to the 'files' directory
 
 .. code-block:: shell-session
 
