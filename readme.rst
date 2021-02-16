@@ -18,7 +18,7 @@ MMC or SD card. All commands that work with *.ssd* FILES can be also used on a d
 image contained within an MMB file. Index of a disk image within an MMB file can be
 either specified using `index`__ option, or appended to the MMB file name, following
 a colon character, e.g. ``beeb.mmb:12``. Commands |list|_, |dump|_ and |digest|_ can
-take a range of disk images, e.g. ``beeb.mmb:10-20`` or entire *MMB* file. In that
+take a range of disk images, e.g. ``beeb.mmb:10-20`` or an entire *MMB* file. In that
 case command will be applied to all *initialized* disk image in the specified range.
 
 There are few commands intended specially for MMB files, such as |donboot|_ or
