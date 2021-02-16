@@ -13,7 +13,7 @@ exporting from the disk images, modifying disk images in place, such as
 renaming files or changing disk title and transferring data between disk images.
 
 The ``dfsimage`` module also supports *MMB* files. *MMB* files are containers for
-large number of `.ssd` disk image, designed for storing disk images on a
+large number of ``.ssd`` disk images, designed for storing disk images on a
 MMC or SD card. All commands that work with *.ssd* FILES can be also used on a disk
 image contained within an MMB file. Index of disk image within MMB file can be
 either specified using `index`__ option, or appended to MMB file name, following
