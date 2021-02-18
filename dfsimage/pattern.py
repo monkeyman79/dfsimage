@@ -42,4 +42,4 @@ class PatternList:
             pattern.ensure_matched()
 
 
-PatternUnion = Union[None, str, List[str], ParsedPattern, PatternList]
+PatternUnion = Union[str, List[str], ParsedPattern, PatternList]

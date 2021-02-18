@@ -13,11 +13,9 @@ from .simplewarn import warn
 
 from .consts import CATALOG_SECTORS, CATALOG_SECTOR1, CATALOG_SECTOR2, SECTOR_SIZE
 from .consts import SECTORS, MAX_FILES, SINGLE_SECTORS, DOUBLE_SECTORS
-from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE
-from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO, LIST_FORMAT_RAW
-from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE, LIST_FORMAT_DCAT
-from .consts import WARN_ALL, WARN_FIRST, WARN_NONE
 
+from .enums import DigestMode, ListFormat, WarnMode
+from .enums import ListFormatUnion
 from .misc import bchr, json_dumps, xml_dumps
 from .misc import LazyString, ValidationWarning
 from .conv import bbc_to_unicode, unicode_to_bbc, from_bcd, to_bcd
@@ -48,8 +46,8 @@ class Side:
         self.image = image
         self.head = head % image.heads
         self.total_sectors = self.image.sectors_per_head
-        self.csector1 = self._logical_sector(CATALOG_SECTOR1)
-        self.csector2 = self._logical_sector(CATALOG_SECTOR2)
+        self._csector1 = self._logical_sector(CATALOG_SECTOR1)
+        self._csector2 = self._logical_sector(CATALOG_SECTOR2)
         self.isvalid = True
 
     @property
@@ -124,7 +122,7 @@ class Side:
         Raises:
             ValueError: Assigned title is longer than 12 chars
         """
-        vbytes = bytes((x & 127 for x in bytes(self.csector1[0:8])+bytes(self.csector2[0:4])))
+        vbytes = bytes((x & 127 for x in bytes(self._csector1[0:8])+bytes(self._csector2[0:4])))
         return bbc_to_unicode(vbytes.decode("ascii").rstrip(chr(0)))
 
     @title.setter
@@ -133,8 +131,8 @@ class Side:
             raise ValueError("title too long")
         vbytes = unicode_to_bbc(value).ljust(12, chr(0)).encode("ascii")
         self.modified = True
-        self.csector1[0:8] = vbytes[0:8]  # type: ignore
-        self.csector2[0:4] = vbytes[8:12]  # type: ignore
+        self._csector1[0:8] = vbytes[0:8]  # type: ignore
+        self._csector2[0:4] = vbytes[8:12]  # type: ignore
         if self.image._mmb_entry is not None:
             self.image._mmb_entry.title = value
 
@@ -145,12 +143,12 @@ class Side:
         Sequence number is a Binary Coded Decimal value incremented by the Disk Filing System
         each time the disk catalog is modified.
         """
-        return from_bcd(self.csector2[4])
+        return from_bcd(self._csector2[4])
 
     @sequence_number.setter
     def sequence_number(self, value: int) -> None:
         self.modified = True
-        self.csector2[4] = to_bcd(value)  # type: ignore
+        self._csector2[4] = to_bcd(value)  # type: ignore
 
     @property
     def last_entry_offset(self) -> int:
@@ -163,14 +161,14 @@ class Side:
         Raises:
             ValueError: Assigned value is outside of valid range of is not a multiple of 8.
         """
-        return self.csector2[5]
+        return self._csector2[5]
 
     @last_entry_offset.setter
     def last_entry_offset(self, value: int) -> None:
         if value & 7 != 0 or value > 248 or value < 0:
             raise ValueError("invalid end of catalog offset value")
         self.modified = True
-        self.csector2[5] = value  # type: ignore
+        self._csector2[5] = value  # type: ignore
 
     @property
     def number_of_files(self) -> int:
@@ -203,12 +201,12 @@ class Side:
         Bits 2,3,6 and 7 should all be zero, or floppy image is considered invalid
         or unsupported.
         """
-        return self.csector2[6]
+        return self._csector2[6]
 
     @opt_byte.setter
     def opt_byte(self, value: int) -> None:
         self.modified = True
-        self.csector2[6] = value  # type: ignore
+        self._csector2[6] = value  # type: ignore
 
     @property
     def opt(self) -> int:
@@ -250,15 +248,15 @@ class Side:
 
         This value should be either 800 for 80 track disks, or 400 for 40 track disks.
         """
-        return self.csector2[7] + ((self.csector2[6] & 3) << 8)
+        return self._csector2[7] + ((self._csector2[6] & 3) << 8)
 
     @number_of_sectors.setter
     def number_of_sectors(self, value: int) -> None:
         if value not in (SINGLE_SECTORS, DOUBLE_SECTORS):
             raise ValueError("invalid total number of sectors")
         self.modified = True
-        self.csector2[7] = value & 255  # type: ignore
-        self.csector2[6] = (self.csector2[6] & ~3) | ((value >> 8) & 3)  # type: ignore
+        self._csector2[7] = value & 255  # type: ignore
+        self._csector2[6] = (self._csector2[6] & ~3) | ((value >> 8) & 3)  # type: ignore
 
     @property
     def used_sectors(self) -> int:
@@ -342,10 +340,10 @@ class Side:
 
         self.modified = True
         if start != end:
-            self.csector1[start-8:end-8] = self.csector1[start:end]
-            self.csector2[start-8:end-8] = self.csector2[start:end]
+            self._csector1[start-8:end-8] = self._csector1[start:end]
+            self._csector2[start-8:end-8] = self._csector2[start:end]
 
-        self[self.number_of_files-1].clear()
+        self[self.number_of_files-1]._clear()
         self.last_entry_offset = end - 16
 
     def _insert_entry(self, index: int, fullname: str,
@@ -375,22 +373,22 @@ class Side:
 
         self.modified = True
         if start != end:
-            self.csector1[start+8:end+8] = self.csector1[start:end]
-            self.csector2[start+8:end+8] = self.csector2[start:end]
+            self._csector1[start+8:end+8] = self._csector1[start:end]
+            self._csector2[start+8:end+8] = self._csector2[start:end]
 
         self.last_entry_offset = end
 
         entry = self[index]
-        entry.clear()
+        entry._clear()
         entry.fullname = fullname
         entry.start_sector = start_sector
         entry.size = size
         return entry
 
-    def _add_entry(self, fullname: str, data: bytes, load_addr: Optional[int],
+    def _add_entry(self, fullname: str, data: bytes, *, load_addr: Optional[int],
                    exec_addr: Optional[int], locked: bool,
                    replace: bool, ignore_access: bool, no_compact: bool) -> Entry:
-        self.check_valid()
+        self._check_valid()
         size = len(data)
 
         entry = self.find_entry(fullname)
@@ -421,7 +419,7 @@ class Side:
         entry.locked = locked
         return entry
 
-    def check_valid(self) -> None:
+    def _check_valid(self) -> None:
         """Check if catalog is valid before modifications."""
         if not self.isvalid:
             raise IOError("disk image is corrupted, can't be modified")
@@ -436,14 +434,14 @@ class Side:
             return True
         return False
 
-    def to_fullname(self, filename: str) -> str:
+    def _to_fullname(self, filename: str) -> str:
         """Prepend current directory name ($) if not present in filename.
 
         Filename is not a pattern - characters *?![] are not special and
         are all valid filename characters.
         """
 
-        filename, head = self.image.to_fullname(filename, self.head)
+        filename, head = self.image._to_fullname(filename, self.head)
 
         if head != self.head:
             raise ValueError("bad drive")
@@ -459,11 +457,11 @@ class Side:
             Found entry or None.
         """
         i = 0
-        name = unicode_to_bbc(self.to_fullname(filename))
+        name = unicode_to_bbc(self._to_fullname(filename))
         while i < self.number_of_files:
             start = (i+1) * 8
             end = (i+2) * 8
-            entry = Entry(self, i, self.csector1[start:end], self.csector2[start:end])
+            entry = Entry(self, i, self._csector1[start:end], self._csector2[start:end])
             if entry.fullname_ascii.lower() == name.lower():
                 return entry
             i += 1
@@ -475,7 +473,7 @@ class Side:
         Raises:
             IOError: Disk catalog is corrupted
         """
-        self.check_valid()
+        self._check_valid()
         start_sector = 2
         last_used_sector = self.last_used_sector
         entries = list(self.files)
@@ -490,12 +488,12 @@ class Side:
         if start_sector != last_used_sector:
             self.get_logical_sectors(start_sector, last_used_sector).clear()
 
-    def backup(self, source, warn_mode: int = None):
+    def backup(self, source, warn_mode: WarnMode = None):
         """Copy all sectors data from other image.
 
         See Image.backup
         """
-        return self.image.backup(source, warn_mode, default_head=self.head)
+        return self.image.backup(source, warn_mode=warn_mode, default_head=self.head)
 
     def copy_over(self, source, pattern: PatternUnion,
                   **kwargs) -> int:
@@ -588,7 +586,7 @@ class Side:
                 raise IndexError("invalid file entry index")
             start = (index+1) * 8
             end = (index+2) * 8
-            return Entry(self, index, self.csector1[start:end], self.csector2[start:end])
+            return Entry(self, index, self._csector1[start:end], self._csector2[start:end])
 
         if isinstance(index, str):
             entry = self.find_entry(index)
@@ -617,9 +615,9 @@ class Side:
         if pattern is None:
             return list(self.files)
 
-        parsed = self.image.compile_pattern(pattern)
+        parsed = self.image._compile_pattern(pattern)
         files = [file for file in iter(self.files)
-                 if file.match_parsed(parsed, self.head)]
+                 if file._match_parsed(parsed, self.head)]
         if not silent:
             parsed.ensure_matched()
         return files
@@ -640,7 +638,7 @@ class Side:
         """Textual representation."""
         return self.__str__()
 
-    def validate(self, warn_mode: int = WARN_FIRST) -> bool:
+    def validate(self, warn_mode: WarnMode = WarnMode.FIRST) -> bool:
         """Validate catalog.
 
         Validate catalog data and file entries. Issue a warning and return
@@ -651,14 +649,14 @@ class Side:
             A boolean indicating if catalog is valid.
         """
         isvalid = True
-        warnall = warn_mode == WARN_ALL
+        warnall = warn_mode == WarnMode.ALL
 
         # pylint: disable=unused-argument
         def formatmsg(message: Union[Warning, str]) -> str:
             return ("%s: %s: %s"
                     % (type(message).__name__, self.image_displayname, str(message)))
 
-        if warn_mode == WARN_NONE:
+        if warn_mode == WarnMode.NONE:
             simplewarn.mute(ValidationWarning)
 
         simplewarn.current_format = formatmsg
@@ -699,7 +697,7 @@ class Side:
                 end_sector = entry.start_sector
                 index += 1
             if badorder:
-                self.check_sectors_allocation(warnall)
+                self._check_sectors_allocation(warnall)
 
         finally:
             simplewarn.current_format = simplewarn.formatmsg
@@ -858,25 +856,25 @@ class Side:
             status = ''
         return "%5d %12s %1s" % (index, self.title, status)
 
-    def listing_header(self, fmt: Union[int, str] = None,
+    def listing_header(self, fmt: ListFormatUnion = None,
                        file=sys.stdout) -> None:
         """Print catalog listing header lines according to selected format.
 
         See Side.PROPERTY_NAMES for list of available keys.
 
         Args:
-            fmt: Optional; Selected format. Value can be one of LIST_FORMAT_...
-                constant or custom formatting string. If fmt in any LIST_FORMAT_...
-                constant other that LIST_FORMAT_CAT, LIST_FORMAT_DCAT and
-                LIST_FORMAT_TABLE, result is empty.
+            fmt: Optional; Selected format. Value can be one of ListFormat enum
+                or custom formatting string. If fmt in any ListFormat enum
+                constant other that ListFormat.CAT, ListFormat.DCAT and
+                ListFormat.TABLE, result is empty.
                 If fmt is a string, the header is generated with str.format function.
             file: Output stream. Default is sys.stdout.
         Raises:
             ValueError: Parameter 'fmt' is invalid.
         """
         if fmt is None:
-            fmt = LIST_FORMAT_CAT
-        if fmt == LIST_FORMAT_TABLE:
+            fmt = ListFormat.CAT
+        if fmt == ListFormat.TABLE:
             fmt = Side.TABLE_FORMAT
         drive = self.head * 2
         optstr = Side.boot_opt_to_str(self.opt)
@@ -885,15 +883,15 @@ class Side:
         elif isinstance(fmt, str):
             attrs = self.get_properties(for_format=True, recurse=False, level=0)
             print(fmt.format_map(cast(Dict[str, object], attrs)), file=file)
-        elif fmt == LIST_FORMAT_DCAT:
+        elif fmt == ListFormat.DCAT:
             print(self.dcat_line())
-        elif fmt == LIST_FORMAT_CAT:
+        elif fmt == ListFormat.CAT:
             print(f'{self.title} ({self.sequence_number:02})', file=file)
             print("%-20s%s" % (f'Drive {drive}', f'Option {self.opt} ({optstr})'), file=file)
             print("%-20s%s" % (f'Dir. :{drive}.{self.image.current_dir}', 'Lib. :0.$'), file=file)
             print("", file=file)
-        elif fmt not in (LIST_FORMAT_RAW, LIST_FORMAT_INFO, LIST_FORMAT_INF,
-                         LIST_FORMAT_JSON, LIST_FORMAT_XML):
+        elif fmt not in (ListFormat.RAW, ListFormat.INFO, ListFormat.INF,
+                         ListFormat.JSON, ListFormat.XML):
             raise ValueError("invalid listing format")
 
     @staticmethod
@@ -905,7 +903,7 @@ class Side:
             if gap:
                 print('', file=file)
                 gap = False
-            fname = entry.listing_entry(LIST_FORMAT_CAT)
+            fname = entry.listing_entry(ListFormat.CAT)
             if fname1 is not None:
                 print('%-20s%s' % (fname1, fname), file=file)
                 fname1 = None
@@ -915,24 +913,14 @@ class Side:
             print(fname1, file=file)
             fname1 = None
 
-    def listing(self, fmt: Union[int, str] = None,
+    def listing(self, fmt: ListFormatUnion = None,
                 pattern: PatternUnion = None,
-                header_fmt: Union[int, str] = None, footer_fmt: Union[int, str] = None,
+                header_fmt: ListFormatUnion = None, footer_fmt: ListFormatUnion = None,
                 sort: bool = None, silent: bool = False, file=sys.stdout) -> None:
         """Print catalog listing.
 
         Print catalog listing using predefined format or custom
         formatting strings.
-
-        Predefined formats are:
-            LIST_FORMAT_RAW (0)   - List file names, no header.
-            LIST_FORMAT_INFO (1)  - As displayed by *INFO command.
-            LIST_FORMAT_INF (2)   - As in .inf files.
-            LIST_FORMAT_CAT (3)   - As displayed by *CAT command.
-            LIST_FORMAT_JSON (4)  - JSON
-            LIST_FORMAT_XML (5)   - XML
-            LIST_FORMAT_TABLE (6) - Fixed-width text table.
-            LIST_FORMAT_DCAT (7)  - As displayed by MMC *DCAT command.
 
         For list of keys available for custom header formatting string see
         Side.PROPERTY_NAMES.
@@ -942,34 +930,34 @@ class Side:
 
         Args:
             fmt: Optional; Selected file entry format. Value can be one of
-                LIST_FORMAT_... constants or custom formatting string.
+                ListFormat enum or custom formatting string.
             pattern: Optional; Only list files matching pattern (see Entry.match).
             header_fmt: Optional; Selected listing header format. Value can be one of
-                LIST_FORMAT_... constants or custom formatting string.
+                ListFormat enum or custom formatting string.
             footer_fmt: Optional; Formatting string for listing footer.
                 Default is no footer.
             sort: Optional; If this flag is True, displayed files are sorted
-                alphabetically. It is enabled by default for LIST_FORMAT_CAT format
+                alphabetically. It is enabled by default for ListFormat.CAT format
                 and disabled for all other formats.
             silent: Optional; Don't raise exception if pattern doesn't match any file.
             file: Optional; Output stream. Default is sys.stdout.
         Raises:
             ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
         """
-        fmt = LIST_FORMAT_CAT if fmt is None else fmt
+        fmt = ListFormat.CAT if fmt is None else fmt
 
         header_fmt = fmt if header_fmt is None and not isinstance(fmt, str) else header_fmt
 
         if header_fmt is not None and header_fmt != '':
             self.listing_header(header_fmt, file=file)
 
-        sort = (fmt == LIST_FORMAT_CAT) if sort is None else sort
+        sort = (fmt == ListFormat.CAT) if sort is None else sort
 
         entries = self.get_files(pattern, silent)
         if sort:
             entries.sort()
 
-        if fmt == LIST_FORMAT_CAT:
+        if fmt == ListFormat.CAT:
             self._print_cat_lines((e for e in entries
                                    if e.directory == self.image.current_dir),
                                   file, False)
@@ -977,22 +965,22 @@ class Side:
                                    if e.directory != self.image.current_dir),
                                   file, True)
 
-        elif fmt == LIST_FORMAT_JSON:
+        elif fmt == ListFormat.JSON:
             attrs = self.get_properties(for_format=False, recurse=True,
                                         level=0, pattern=pattern)
             print(json_dumps(attrs), file=file, end='')
 
-        elif fmt == LIST_FORMAT_XML:
+        elif fmt == ListFormat.XML:
             attrs = self.get_properties(for_format=False, recurse=True,
                                         level=0, pattern=pattern)
             print(xml_dumps(attrs, "side"), file=file)
 
-        elif (fmt in (LIST_FORMAT_RAW, LIST_FORMAT_INFO, LIST_FORMAT_INF, LIST_FORMAT_TABLE)
+        elif (fmt in (ListFormat.RAW, ListFormat.INFO, ListFormat.INF, ListFormat.TABLE)
               or isinstance(fmt, str) and fmt != ''):
             for entry in entries:
                 print(entry.listing_entry(fmt), file=file)
 
-        elif fmt != '' and fmt != LIST_FORMAT_DCAT:
+        elif fmt != '' and fmt != ListFormat.DCAT:
             raise ValueError("invalid listing format")
 
         if footer_fmt is not None and footer_fmt != '':
@@ -1006,7 +994,7 @@ class Side:
             silent: Optional; Don't raise exception if pattern doesn't match any file.
             file: Output stream. Default is sys.stdout.
         """
-        self.listing(LIST_FORMAT_CAT, pattern, silent=silent, file=file)
+        self.listing(ListFormat.CAT, pattern, silent=silent, file=file)
 
     def info(self, pattern: PatternUnion = None, silent: bool = False, file=sys.stdout) -> None:
         """Generate file listing as produced by *INFO command.
@@ -1016,7 +1004,7 @@ class Side:
             silent: Optional; Don't raise exception if pattern doesn't match any file.
             file: Output stream. Default is sys.stdout.
         """
-        self.listing(LIST_FORMAT_INFO, pattern, silent=silent, file=file)
+        self.listing(ListFormat.INFO, pattern, silent=silent, file=file)
 
     @staticmethod
     def boot_opt_to_str(boot_opt: int) -> str:
@@ -1068,7 +1056,7 @@ class Side:
         """
         self.get_all_sectors().hexdump(start, size, width, ellipsis, file=file)
 
-    def check_sectors_allocation(self, warnall: bool = False) -> bool:
+    def _check_sectors_allocation(self, warnall: bool = False) -> bool:
         """Check for overlapping sectors.
 
         Returns:
@@ -1127,8 +1115,8 @@ class Side:
             tracks = self.image.tracks
         self.get_all_sectors().fill(0xe5)
         empty = bytes(SECTOR_SIZE)
-        self.csector1[:] = empty  # type: ignore
-        self.csector2[:] = empty  # type: ignore
+        self._csector1[:] = empty  # type: ignore
+        self._csector2[:] = empty  # type: ignore
         self.number_of_sectors = tracks * SECTORS
 
     def readall(self) -> bytes:
@@ -1147,8 +1135,8 @@ class Side:
         """Read used floppy side areas in form suitable for digest."""
         # Start with catalog sector length to make it provably unique.
         cend = self.last_entry_offset
-        parts = [b''.join((bchr(cend), self.csector1[:cend+8],
-                           self.csector2[:cend+8]))]
+        parts = [b''.join((bchr(cend), self._csector1[:cend+8],
+                           self._csector2[:cend+8]))]
         for file in self.files:
             parts.append(file.readall())
         return b''.join(parts)
@@ -1166,23 +1154,11 @@ class Side:
             parts.append(b''.join((fullname, loadaddr, execaddr, length, file.readall())))
         return b''.join(parts)
 
-    def get_digest(self, mode: int = None, algorithm: str = None) -> str:
+    def get_digest(self, mode: DigestMode = None, algorithm: str = None) -> str:
         """Generate hexadecimal digest of floppy side contents.
 
-        Available modes are:
-            DIGEST_MODE_ALL (0) - Digest of all sectors data, including
-                unused sectors.
-            DIGEST_MODE_USED (1) - Digest of all files data and
-                attributes and all disk attributes. The digest includes
-                used parts of catalog sectors and used parts of sectors
-                occupied by files.
-            DIGEST_MODE_FILE (2) - Digest of files data. File
-                list is sorted alphabetically. Load and exec
-                addresses are included in the digest. File access mode and disk
-                attributes are not included.
-
         Args:
-            mode: Optional; Selects digest mode. Default is DIGEST_MODE_ALL.
+            mode: Optional; Selects digest mode. Default is DigestMode.ALL.
             algorithm: Optional; Algorithm to use instead of the default SHA1.
         Returns:
             Hexadecimal digest string.
@@ -1190,10 +1166,10 @@ class Side:
         if algorithm is None:
             algorithm = 'sha1'
         if mode is None:
-            mode = DIGEST_MODE_ALL
-        if mode == DIGEST_MODE_ALL:
+            mode = DigestMode.ALL
+        if mode == DigestMode.ALL:
             data = self.get_all_sectors().readall()
-        elif mode == DIGEST_MODE_USED:
+        elif mode == DigestMode.USED:
             data = self._used_data()
         else:
             data = self._files_data()
@@ -1203,14 +1179,14 @@ class Side:
     @property
     def sha1(self) -> str:
         """SHA1 digest of the entire floppy disk side surface."""
-        return self.get_digest(DIGEST_MODE_ALL)
+        return self.get_digest(DigestMode.ALL)
 
     @property
     def sha1files(self) -> str:
         """SHA1 digest of all files on the floppy disk side."""
-        return self.get_digest(DIGEST_MODE_FILE)
+        return self.get_digest(DigestMode.FILE)
 
     @property
     def sha1used(self) -> str:
         """SHA1 digest of floppy disk side surface excluding unused areas."""
-        return self.get_digest(DIGEST_MODE_USED)
+        return self.get_digest(DigestMode.USED)

@@ -10,8 +10,8 @@ from typing import cast
 from .consts import MMB_INDEX_SIZE, MMB_INDEX_ENTRY_SIZE, MMB_MAX_ENTRIES, MMB_SIZE
 from .consts import MMB_STATUS_UNINITIALIZED
 
-from .consts import LIST_FORMAT_DCAT
-from .consts import WARN_NONE
+from .enums import ListFormat, ListFormatUnion
+from .enums import WarnMode, OpenMode
 
 from .misc import is_mmb_file
 
@@ -20,7 +20,7 @@ from .mmbentry import MMBEntry
 from .image import Image
 
 
-class MMBOnbootList:
+class _MMBOnbootList:
     """Indexable access to images inserted into drives at boot time."""
 
     def __init__(self, mmb_file: 'MMBFile'):
@@ -36,7 +36,7 @@ class MMBOnbootList:
         return 4
 
 
-class MMBAllEntries:
+class _MMBAllEntries:
     """Indexable access to all images, including uninitialized ones."""
 
     def __init__(self, mmb_file: 'MMBFile'):
@@ -272,9 +272,9 @@ class MMBFile:
                         owner=self)
 
     @property
-    def all_entries(self) -> MMBAllEntries:
+    def all_entries(self) -> _MMBAllEntries:
         """Sequence of initialized entries."""
-        return MMBAllEntries(self)
+        return _MMBAllEntries(self)
 
     @property
     def entries(self) -> Generator[MMBEntry, None, None]:
@@ -287,12 +287,12 @@ class MMBFile:
             index += 1
 
     @property
-    def onboot(self) -> MMBOnbootList:
+    def onboot(self) -> _MMBOnbootList:
         """List of images inserted into drives at boot time."""
-        return MMBOnbootList(self)
+        return _MMBOnbootList(self)
 
-    def open_entry(self, entry: Union[int, MMBEntry], open_mode: int = None,
-                   warn_mode: int = None,
+    def open_entry(self, entry: Union[int, MMBEntry], open_mode: OpenMode = None,
+                   warn_mode: WarnMode = None,
                    catalog_only=False) -> 'Image':
         """Open disk image.
 
@@ -309,7 +309,7 @@ class MMBFile:
                           open_mode=open_mode, warn_mode=warn_mode, index=entry,
                           catalog_only=catalog_only)
 
-    def drecat(self, warn_mode: int = None) -> int:
+    def drecat(self, warn_mode: WarnMode = None) -> int:
         """Rebuild index of titles.
 
         Args:
@@ -374,7 +374,7 @@ class MMBFile:
                 if not entry.initialized and (start_index is None or end_index is None
                                               or end_index != start_index + 1):
                     continue
-                with entry.open(warn_mode=WARN_NONE, catalog_only=False) as image:
+                with entry.open(warn_mode=WarnMode.NONE, catalog_only=False) as image:
                     if parsed is None:
                         parsed = image.compile_pattern(pattern)
                     image_list.append(
@@ -394,7 +394,7 @@ class MMBFile:
 
         return attrs
 
-    def listing(self, fmt: Union[int, str] = None,
+    def listing(self, fmt: ListFormatUnion = None,
                 pattern: PatternUnion = None,
                 start_index: int = None, end_index: int = None,
                 silent=False,
@@ -405,7 +405,7 @@ class MMBFile:
 
         Args:
             fmt: Optional; Listing format. Value can be one of
-                LIST_FORMAT_... constants or custom formatting string.
+                ListFormat enum or custom formatting string.
             start_index: Optional; Starting image index for partial listing
             end_index: Optional; Ending image index for partial listing
         """
@@ -420,10 +420,10 @@ class MMBFile:
             if not entry.initialized and (start_index is None or end_index is None
                                           or end_index != start_index + 1):
                 continue
-            with entry.open(warn_mode=WARN_NONE, catalog_only=True) as image:
+            with entry.open(warn_mode=WarnMode.NONE, catalog_only=True) as image:
                 if pattern is not None and parsed is None:
                     parsed = image.compile_pattern(pattern)
-                if fmt == LIST_FORMAT_DCAT:
+                if fmt == ListFormat.DCAT:
                     line += image.sides[0].dcat_line()
                     count += 1
                     if count == 4:

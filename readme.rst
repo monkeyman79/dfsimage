@@ -983,8 +983,8 @@ Display or set images mounted in drives on boot.
 
   dfsimage donboot [`global options`_] [--set DRIVE IMAGE]... MMB_FILE
 
-formatting keyword arguments
-============================
+keyword arguments for listing format
+====================================
 
 file properties
 ---------------

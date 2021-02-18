@@ -17,18 +17,13 @@ from .simplewarn import warn
 
 from .consts import SECTORS, SECTOR_SIZE, TRACK_SIZE
 from .consts import SINGLE_TRACKS, DOUBLE_TRACKS, CATALOG_SECTORS
-from .consts import SIZE_OPTION_KEEP, SIZE_OPTION_EXPAND, SIZE_OPTION_SHRINK
-from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO
-from .consts import LIST_FORMAT_RAW, LIST_FORMAT_DCAT
-from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE
-from .consts import OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING, OPEN_MODE_NEW
-from .consts import WARN_FIRST, WARN_NONE
-from .consts import INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER
-from .consts import TRANSLATION_STANDARD, TRANSLATION_SAFE
 from .consts import MMB_INDEX_ENTRY_SIZE, MMB_INDEX_SIZE
 from .consts import MMB_MAX_ENTRIES, MMB_DISK_SIZE
 from .consts import MMB_STATUS_UNLOCKED
 
+from .enums import SizeOption, ListFormat, OpenMode, WarnMode
+from .enums import InfMode, TranslationMode
+from .enums import ListFormatUnion
 from .misc import bchr, LazyString, json_dumps, xml_dumps
 from .misc import DFSWarning, ValidationWarning
 from .misc import is_mmb_file
@@ -39,12 +34,12 @@ from .protocol import Property, ImageProtocol
 from .sectors import Sectors
 from .entry import Entry
 from .side import Side
-from .inf import Inf, InfCache, canonpath
+from .inf import Inf, _InfCache, canonpath
 
 from .mmbentry import MMBEntry, MMBFileProtocol
 
 
-class SideProperty:
+class _SideProperty:
     """Proxy property for the default side or all sides."""
 
     def __init__(self, prop):
@@ -71,7 +66,7 @@ class SideProperty:
 
 
 class Image:
-    """DFS floppy disk image loaded (or mapped) into memory."""
+    """Represents DFS floppy disk image loaded (or mapped) into memory."""
 
     TABLE_FORMAT = (
         "{displayname:15}|"
@@ -80,19 +75,16 @@ class Image:
         )
 
     def __init__(self, filename: str, for_write=False,
-                 open_mode: int = None, heads: int = None, tracks: int = None,
-                 linear: bool = None, warn_mode: int = None,
+                 open_mode: OpenMode = None, heads: int = None, tracks: int = None,
+                 linear: bool = None, warn_mode: WarnMode = None,
                  index: Union[int, MMBEntry] = None,
                  catalog_only=False) -> None:
-        """Open disk image file and construct new 'Image' object.
+        """Open disk image file and construct a new :class:`Image` object.
 
         Args:
             filename: Image filename
             for_write: Optional; Open image for write.
-            open_mode: Optional; File open mode. Can be one of: OPEN_MODE_ALWAYS - create
-                new or open existing file, OPEN_MODE_NEW - create new file, fail if file
-                already exists, OPEN_MODE_EXISTING - open existing file, fail if file
-                doesn't exist. Default is OPEN_MODE_ALWAYS.
+            open_mode: Optional; File open mode.
             heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
             tracks: Number of tracks per side - 80 or 40. Default is 80.
             linear: Optional; This flags is always True for single sided disks.
@@ -100,9 +92,9 @@ class Image:
                 together as opposed to more popular image format where track data for
                 two sides are interleaved. Default is True for double sided SSD images
                 and False for other double sided disks.
-            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
-                warning for first non-fatal validation error and stop validation, WARN_ALL -
-                display all validation errors, WARN_NONE - don't display validation errors.
+            warn_mode: Optional; Warning mode for validation: WarnMode.FIRST - display
+                warning for first non-fatal validation error and stop validation, WarnMode.ALL -
+                display all validation errors, WarnMode.NONE - don't display validation errors.
             index: Optional; Image index, required for MMB file, or drive number for double
                 sided disk.
             catalog_only: Optional; Open only for reading catalog.
@@ -110,11 +102,11 @@ class Image:
             RuntimeError: If image file is invalid or the class doesn't like it
                 for some reason.
             ValueError: If 'heads' or 'tracks' argument has invalid value.
-            ValueError: If 'open_mode' is invalid or 'open_mode' is OPEN_MODE_NEW
+            ValueError: If 'open_mode' is invalid or 'open_mode' is OpenMode.NEW
                 and 'for_write' is False.
-            FileNotFoundError: File not found and open_mode is OPEN_MODE_EXISTING or
+            FileNotFoundError: File not found and open_mode is OpenMode.EXISTING or
                 for_write is False.
-            FileExistsError: File already exists and open_mode is OPEN_MODE_NEW.
+            FileExistsError: File already exists and open_mode is OpenMode.NEW.
         """
         self._modified = False
 
@@ -185,13 +177,13 @@ class Image:
 
         return filename, index
 
-    def _validate_open_mode(self, open_mode: Optional[int]) -> int:
+    def _validate_open_mode(self, open_mode: Optional[OpenMode]) -> OpenMode:
         if open_mode is None:
-            open_mode = OPEN_MODE_ALWAYS
+            open_mode = OpenMode.ALWAYS
 
-        if (open_mode not in (OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING,
-                              OPEN_MODE_NEW)
-                or open_mode == OPEN_MODE_NEW and self.is_read_only):
+        if (open_mode not in (OpenMode.ALWAYS, OpenMode.EXISTING,
+                              OpenMode.NEW)
+                or open_mode == OpenMode.NEW and self.is_read_only):
             raise ValueError("invalid open mode")
 
         if not self.is_read_only and self.catalog_only:
@@ -199,7 +191,7 @@ class Image:
 
         return open_mode
 
-    def _check_mmb_file(self, open_mode: int,
+    def _check_mmb_file(self, open_mode: OpenMode,
                         index: Union[None, int, MMBEntry]) -> Optional[int]:
 
         side_index: Optional[int] = None
@@ -216,7 +208,7 @@ class Image:
 
         else:
             self.is_new_image = (not self.is_read_only
-                                 and open_mode != OPEN_MODE_EXISTING
+                                 and open_mode != OpenMode.EXISTING
                                  and not os.path.exists(self.path))
 
             if not self.is_new_image:
@@ -341,7 +333,7 @@ class Image:
                     self._mmb_entry._dataview) != MMB_INDEX_ENTRY_SIZE:
                 raise RuntimeError("unexpected index short read")
 
-    def _load_image(self, warn_mode: Optional[int], open_mode: int):
+    def _load_image(self, warn_mode: Optional[WarnMode], open_mode: OpenMode):
 
         try:
             if self._mmb_file is not None:
@@ -355,11 +347,11 @@ class Image:
 
             if self._mmb_entry is not None:
                 self._load_mmb_entry()
-                if (open_mode == OPEN_MODE_EXISTING and not self._mmb_entry.initialized):
+                if (open_mode == OpenMode.EXISTING and not self._mmb_entry.initialized):
                     raise PermissionError("%s: image is not initialized"
                                           % self.displayname)
 
-            if self.is_new_image or self.is_mmb and open_mode == OPEN_MODE_NEW:
+            if self.is_new_image or self.is_mmb and open_mode == OpenMode.NEW:
                 if self.is_mmb:
                     if self.initialized:
                         raise PermissionError("%s: image is already initialized"
@@ -394,7 +386,7 @@ class Image:
 
     @classmethod
     def create(cls, filename: str, heads: int = None, tracks: int = None,
-               linear: bool = None, warn_mode: int = None,
+               linear: bool = None, warn_mode: WarnMode = None,
                index: Union[int, MMBEntry] = None) -> 'Image':
         """Create new image file.
 
@@ -423,12 +415,12 @@ class Image:
         Returns:
             New 'Image' object.
         """
-        return cls(filename, True, OPEN_MODE_NEW, heads, tracks, linear, warn_mode, index)
+        return cls(filename, True, OpenMode.NEW, heads, tracks, linear, warn_mode, index)
 
     @classmethod
-    def open(cls, filename: str, for_write=False, open_mode: int = None,
+    def open(cls, filename: str, for_write=False, open_mode: OpenMode = None,
              heads: int = None, tracks: int = None, linear: bool = None,
-             warn_mode: int = None, index: Union[int, MMBEntry] = None,
+             warn_mode: WarnMode = None, index: Union[int, MMBEntry] = None,
              catalog_only=False) -> 'Image':
         """Open disk image file.
 
@@ -444,10 +436,7 @@ class Image:
         Args:
             filename: Disk image file name.
             for_write: Optional; Open image for write.
-            open_mode: Optional; File open mode. Can be one of: OPEN_MODE_ALWAYS - create
-                new or open existing file, OPEN_MODE_NEW - create new file, fail if file
-                already exists, OPEN_MODE_EXISTING - open existing file, fail if file
-                doesn't exist. Default is OPEN_MODE_ALWAYS.
+            open_mode: Optional; File open mode. Default is OpenMode.ALWAYS.
             heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
             tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
             linear: Optional; This flags is always True for single sided disks.
@@ -455,9 +444,9 @@ class Image:
                 together as opposed to more popular image format where track data for
                 two sides are interleaved. Default is True for double sided SSD images
                 and False for other double sided disks.
-            warn_mode: Optional; Warning mode for validation: WARN_FIRST - display
-                warning for first non-fatal validation error and stop validation, WARN_ALL -
-                display all validation errors, WARN_NONE - don't display validation errors.
+            warn_mode: Optional; Warning mode for validation: WarnMode.FIRST - display
+                warning for first non-fatal validation error and stop validation, WarnMode.ALL -
+                display all validation errors, WarnMode.NONE - don't display validation errors.
             index: Optional; Image index, required for MMB file, or drive number for double
                 sided disk.
             catalog_only: Optional; Open only for reading catalog.
@@ -465,11 +454,11 @@ class Image:
             RuntimeError: If image file is invalid or the class doesn't like it
                 for some reason.
             ValueError: If 'heads' or 'tracks' argument has invalid value.
-            ValueError: If 'open_mode' is invalid or 'open_mode' is OPEN_MODE_NEW
+            ValueError: If 'open_mode' is invalid or 'open_mode' is OpenMode.NEW
                 and 'for_write' is False.
-            FileNotFoundError: File not found and open_mode is OPEN_MODE_EXISTING or
+            FileNotFoundError: File not found and open_mode is OpenMode.EXISTING or
                 for_write is False.
-            FileExistsError: File already exists and open_mode is OPEN_MODE_NEW.
+            FileExistsError: File already exists and open_mode is OpenMode.NEW.
         Returns:
             New 'Image' object.
         """
@@ -477,14 +466,11 @@ class Image:
         return cls(filename, for_write, open_mode, heads, tracks, linear,
                    warn_mode, index, catalog_only)
 
-    def save(self, size_option: int = None) -> None:
+    def save(self, size_option: SizeOption = None) -> None:
         """Write image data back to file.
 
         Args:
-            size_option: Optional; File size option:
-                - SIZE_OPTION_KEEP (0) - Keep size, possibly expanding as needed.
-                - SIZE_OPTION_EXPAND (1) - Expand to maximum size.
-                - SIZE_OPTION_SHRINK (2) - Shrink to minimum size to include last used sector.
+            size_option: Optional; File size option.
         """
         self._not_closed()
 
@@ -497,7 +483,7 @@ class Image:
 
             self.file.seek(self._offset + self._data_offset, SEEK_SET)
             self.file.write(self._dataview[:size])
-            if not self.is_mmb and not self.catalog_only and size_option == SIZE_OPTION_SHRINK:
+            if not self.is_mmb and not self.catalog_only and size_option == SizeOption.SHRINK:
                 self.file.truncate(size)
 
             self.modified = False
@@ -548,8 +534,8 @@ class Image:
         # This may be redundant, but it won't hurt
         if self.sides is not None:
             for side in self.sides:
-                side.csector1 = cast(memoryview, None)
-                side.csector2 = cast(memoryview, None)
+                side._csector1 = cast(memoryview, None)
+                side._csector2 = cast(memoryview, None)
                 side.image = cast(ImageProtocol, None)
             self.sides = cast(Tuple[Side, ...], None)
 
@@ -629,8 +615,8 @@ class Image:
     def current_dir(self, value) -> None:
         if value is None:
             value = '$'
-        if len(value) != 1 or not Entry.isnamechar(unicode_to_bbc(value)
-                                                   .encode('ascii')[0]):
+        if len(value) != 1 or not Entry._isnamechar(unicode_to_bbc(value)
+                                                    .encode('ascii')[0]):
             raise ValueError("invalid directory name")
         self._current_dir = value
 
@@ -719,8 +705,8 @@ class Image:
 
     # pylint: disable=no-member
 
-    title = SideProperty(Side.title)
-    sequence_number = SideProperty(Side.sequence_number)
+    title = _SideProperty(Side.title)
+    sequence_number = _SideProperty(Side.sequence_number)
 
     # pylint: enable=no-member
 
@@ -734,7 +720,7 @@ class Image:
                 yield side.get_entry(index)
                 index += 1
 
-    def track_start(self, head: int, track: int) -> int:
+    def _track_start(self, head: int, track: int) -> int:
         """Get offset to start of track data.
 
         Args:
@@ -747,7 +733,7 @@ class Image:
             return (head * self.tracks + track) * TRACK_SIZE
         return (track * self.heads + head) * TRACK_SIZE
 
-    def track_end(self, head: int, track: int) -> int:
+    def _track_end(self, head: int, track: int) -> int:
         """Get offset to end of track data.
 
         Args:
@@ -756,9 +742,9 @@ class Image:
         Returns:
             Offset to end of track data (first byte after).
         """
-        return self.track_start(head, track) + TRACK_SIZE
+        return self._track_start(head, track) + TRACK_SIZE
 
-    def sector_start(self, head: int, track: int, sector: int) -> int:
+    def _sector_start(self, head: int, track: int, sector: int) -> int:
         """Get offset to start of sector data.
 
         Args:
@@ -768,9 +754,9 @@ class Image:
         Returns:
             Offset to start of sector data.
         """
-        return self.track_start(head, track) + sector * SECTOR_SIZE
+        return self._track_start(head, track) + sector * SECTOR_SIZE
 
-    def sector_end(self, head: int, track: int, sector: int) -> int:
+    def _sector_end(self, head: int, track: int, sector: int) -> int:
         """Get offset to end of sector data.
 
         Args:
@@ -780,9 +766,9 @@ class Image:
         Returns:
             Offset to end of sector data (first byte after).
         """
-        return self.sector_start(head, track, sector) + SECTOR_SIZE
+        return self._sector_start(head, track, sector) + SECTOR_SIZE
 
-    def logical_sector_start(self, head: int, logical_sector: int) -> int:
+    def _logical_sector_start(self, head: int, logical_sector: int) -> int:
         """Get offset to start of sector data by logical sector number.
 
         Args:
@@ -791,10 +777,10 @@ class Image:
         Returns:
             Offset to start of sector data.
         """
-        track, sector = Image.logical_to_physical(logical_sector)
-        return self.sector_start(head, track, sector)
+        track, sector = Image._logical_to_physical(logical_sector)
+        return self._sector_start(head, track, sector)
 
-    def logical_sector_end(self, head: int, logical_sector: int) -> int:
+    def _logical_sector_end(self, head: int, logical_sector: int) -> int:
         """Get offset to end of sector data by logical sector number.
 
         Args:
@@ -803,8 +789,8 @@ class Image:
         Returns:
             Offset to end of sector data (first byte after).
         """
-        track, sector = Image.logical_to_physical(logical_sector)
-        return self.sector_start(head, track, sector) + SECTOR_SIZE
+        track, sector = Image._logical_to_physical(logical_sector)
+        return self._sector_start(head, track, sector) + SECTOR_SIZE
 
     def _get_data(self, start: int, end: int) -> memoryview:
         if start < self._data_offset or end > self._data_offset + len(self._dataview):
@@ -836,8 +822,8 @@ class Image:
             raise IndexError("invalid track number")
         if sector < 0 or sector >= SECTORS:
             raise IndexError("invalid sector number")
-        return self._get_data(self.sector_start(head, track, sector),
-                              self.sector_end(head, track, sector))
+        return self._get_data(self._sector_start(head, track, sector),
+                              self._sector_end(head, track, sector))
 
     def _logical_sector(self, head: int, logical_sector: int) -> memoryview:
         """Get 'memoryview' object to sector data by logical sector number.
@@ -856,7 +842,7 @@ class Image:
         Raises:
             IndexError: Invalid head or sector number
         """
-        track, sector = Image.logical_to_physical(logical_sector)
+        track, sector = Image._logical_to_physical(logical_sector)
         return self._sector(head, track, sector)
 
     def _track(self, head: int, track: int) -> memoryview:
@@ -881,8 +867,8 @@ class Image:
             raise IndexError("invalid head number")
         if track < 0 or track >= self.tracks:
             raise IndexError("invalid track number")
-        track_start = self.track_start(head, track)
-        track_end = self.track_end(head, track)
+        track_start = self._track_start(head, track)
+        track_end = self._track_end(head, track)
         return self._get_data(track_start, track_end)
 
     def _validate_sectors(self, head: int, start_track: int, start_sector: int,
@@ -934,16 +920,16 @@ class Image:
         count = 0
         if self.linear:
             count += (end_track - start_track) * SECTORS + end_sector - start_sector
-            start = self.sector_start(head, start_track, start_sector)
-            end = self.sector_start(head, end_track, end_sector)
+            start = self._sector_start(head, start_track, start_sector)
+            end = self._sector_start(head, end_track, end_sector)
             if start != end:
                 chunks.append(self._get_data(start, end))
 
         else:
             # Go though all tracks but last and append data chunks
             while start_track != end_track:
-                start = self.sector_start(head, start_track, start_sector)
-                end = self.sector_start(head, start_track, SECTORS)
+                start = self._sector_start(head, start_track, start_sector)
+                end = self._sector_start(head, start_track, SECTORS)
                 dataview = self._get_data(start, end)
                 if len(dataview) != 0:
                     chunks.append(dataview)
@@ -952,8 +938,8 @@ class Image:
                 start_track += 1
             # Append last data chunk
             if start_sector != end_sector:
-                start = self.sector_start(head, start_track, start_sector)
-                end = self.sector_start(head, start_track, end_sector)
+                start = self._sector_start(head, start_track, start_sector)
+                end = self._sector_start(head, start_track, end_sector)
                 dataview = self._get_data(start, end)
                 if len(dataview) != 0:
                     chunks.append(dataview)
@@ -976,8 +962,8 @@ class Image:
             IndexError: Invalid sector number
             ValueError: Start sector is after end sector.
         """
-        start_track, start_sector = Image.logical_to_physical(start_logical_sector)
-        end_track, end_sector = Image.logical_to_physical(end_logical_sector)
+        start_track, start_sector = Image._logical_to_physical(start_logical_sector)
+        end_track, end_sector = Image._logical_to_physical(end_logical_sector)
         return self.get_sectors(head, start_track, start_sector,
                                 end_track, end_sector, used_size)
 
@@ -996,7 +982,7 @@ class Image:
         for head in range(0, self.heads):
             last_used = self.get_side(head).last_used_sector - 1
             end = max(end,
-                      self.logical_sector_end(head, last_used))
+                      self._logical_sector_end(head, last_used))
         return end
 
     @property
@@ -1005,17 +991,17 @@ class Image:
 
         Size of disk image when all sectors are present in the image file.
         """
-        return self.sector_end(self.heads - 1, self.tracks - 1, SECTORS - 1)
+        return self._sector_end(self.heads - 1, self.tracks - 1, SECTORS - 1)
 
-    def _get_size_for_save(self, size_option: int = None) -> int:
+    def _get_size_for_save(self, size_option: SizeOption = None) -> int:
         if self.is_mmb:
             return self.original_size
         if size_option is None:
-            size_option = SIZE_OPTION_KEEP
-        if (size_option == SIZE_OPTION_EXPAND
-                or self.is_new_image and size_option == SIZE_OPTION_KEEP):
+            size_option = SizeOption.KEEP
+        if (size_option == SizeOption.EXPAND
+                or self.is_new_image and size_option == SizeOption.KEEP):
             return self.max_size
-        if (size_option == SIZE_OPTION_SHRINK or
+        if (size_option == SizeOption.SHRINK or
                 self.modified and self.original_size < self.min_size):
             return self.min_size
         return self.original_size
@@ -1083,7 +1069,7 @@ class Image:
                                size, width, ellipsis, file=file)
 
     @staticmethod
-    def logical_to_physical(sector: int) -> Tuple[int, int]:
+    def _logical_to_physical(sector: int) -> Tuple[int, int]:
         """Convert logical sector number to physical track and sector number.
 
         Args:
@@ -1094,7 +1080,7 @@ class Image:
         return sector // SECTORS, sector % SECTORS
 
     @staticmethod
-    def physical_to_logical(track: int, sector: int) -> int:
+    def _physical_to_logical(track: int, sector: int) -> int:
         """Convert physical track and sector number to logical sector number.
 
         This method doesn't validate track number. It will be validated when
@@ -1119,7 +1105,7 @@ class Image:
         return "%d side%s %d tracks" % (self.heads,
                                         "" if self.heads == 1 else "s", self.tracks)
 
-    def validate(self, warn_mode: int = None) -> bool:
+    def validate(self, warn_mode: WarnMode = None) -> bool:
         """Validate disk image.
 
         Validate disk image. Raise exception if a fatal error is encountered.
@@ -1133,9 +1119,9 @@ class Image:
         isvalid = True
 
         if warn_mode is None:
-            warn_mode = WARN_FIRST
+            warn_mode = WarnMode.FIRST
 
-        if warn_mode != WARN_NONE and not self.initialized:
+        if warn_mode != WarnMode.NONE and not self.initialized:
             warn(ValidationWarning("%s: image is not initialized"
                                    % self.displayname))
 
@@ -1174,8 +1160,8 @@ class Image:
             raise ValueError("bad drive")
         return name[3:], head
 
-    def parse_name(self, name: str,
-                   is_pattern: bool) -> Tuple[str, Optional[str], Optional[int]]:
+    def _parse_name(self, name: str,
+                    is_pattern: bool) -> Tuple[str, Optional[str], Optional[int]]:
         """Extract drive and directory from pattern or filename.
 
         Returns:
@@ -1223,7 +1209,7 @@ class Image:
 
         return unicode_to_bbc(name), dirname, head
 
-    def parse_pattern(self, name: str) -> ParsedPattern:
+    def _parse_pattern(self, name: str) -> ParsedPattern:
         """Parse filename pattern and convert to regular expression.
 
         Returns:
@@ -1231,7 +1217,7 @@ class Image:
         Raise:
             ValueError: drive name in pattern is invalid or not present.
         """
-        filename, dirname, head = self.parse_name(name, True)
+        filename, dirname, head = self._parse_name(name, True)
 
         f_pattern = (re.compile(fnmatch.translate(filename), re.IGNORECASE)
                      if name is not None else None)
@@ -1243,15 +1229,16 @@ class Image:
     # pylint: disable=missing-function-docstring, no-self-use
 
     @overload
-    def compile_pattern(self, pattern: None) -> None: ...
+    def _compile_pattern(self, pattern: None) -> None:
+        ...
 
     @overload
-    def compile_pattern(self, pattern: Union[
-        str, List[str], ParsedPattern, PatternList]) -> PatternList: ...
+    def _compile_pattern(self, pattern: PatternUnion) -> PatternList:
+        ...
 
     # pylint: disable=missing-function-docstring, no-self-use
 
-    def compile_pattern(self, pattern: PatternUnion) -> Optional[PatternList]:
+    def _compile_pattern(self, pattern: Optional[PatternUnion]) -> Optional[PatternList]:
         """Convert pattern like object to PatternList."""
 
         if pattern is None or isinstance(pattern, PatternList):
@@ -1261,13 +1248,13 @@ class Image:
             return PatternList([pattern])
 
         if isinstance(pattern, str):
-            return PatternList([self.parse_pattern(pattern)])
+            return PatternList([self._parse_pattern(pattern)])
 
-        return PatternList(list(self.parse_pattern(pat) for pat in pattern))
+        return PatternList(list(self._parse_pattern(pat) for pat in pattern))
 
     def _get_heads_from_pattern(self, pattern: PatternUnion = None):
         # List default sides, or sides mentioned in pattern(s)
-        parsed = self.compile_pattern(pattern)
+        parsed = self._compile_pattern(pattern)
 
         # Get drive names from pattern
         if parsed is not None:
@@ -1345,7 +1332,7 @@ class Image:
             if not self.is_mmb or for_format:
                 attrs['number_of_sides'] = self.heads
                 attrs['tracks'] = self.tracks
-                attrs['size'] = self._get_size_for_save(SIZE_OPTION_KEEP)
+                attrs['size'] = self._get_size_for_save(SizeOption.KEEP)
                 attrs['min_size'] = self.min_size
                 attrs['max_size'] = self.max_size
                 attrs['is_linear'] = self.linear
@@ -1368,7 +1355,7 @@ class Image:
                 attrs["displayname"] = self.displayname
 
         if recurse or level < 0:
-            parsed = self.compile_pattern(pattern)
+            parsed = self._compile_pattern(pattern)
             heads = self._get_heads_from_pattern(parsed)
             side_list = [self.get_side(head)
                          .get_properties(for_format=False, recurse=recurse,
@@ -1388,8 +1375,8 @@ class Image:
 
         return attrs
 
-    def listing_header(self, fmt: Union[int, str] = None,
-                       file=sys.stdout) -> None:
+    def _listing_header(self, fmt: ListFormatUnion = None,
+                        file=sys.stdout) -> None:
         """Print listing header line common for entire floppy image file.
 
         See Image.PROPERTY_NAMES for list of available keys.
@@ -1397,7 +1384,7 @@ class Image:
         Args:
             fmt: Selected format. The header is generated with str.format
                 function. Nothing is printed if this parameter is one on
-                LIST_FORMAT_.... constants other than LIST_FORMAT_TABLE.
+                ListFormat enum other than ListFormat.TABLE.
             file: Output stream. Default is sys.stdout.
         Raises:
             ValueError: Parameter 'fmt' is invalid.
@@ -1405,37 +1392,27 @@ class Image:
         self._not_closed()
         if fmt is None or fmt == '':
             return
-        if fmt == LIST_FORMAT_TABLE:
+        if fmt == ListFormat.TABLE:
             fmt = Image.TABLE_FORMAT
         if isinstance(fmt, str):
             attrs = self.get_properties(for_format=True, recurse=False)
             print(fmt.format_map(cast(Dict[str, object], attrs)), file=file)
-        elif fmt not in (LIST_FORMAT_RAW, LIST_FORMAT_INFO,
-                         LIST_FORMAT_INF, LIST_FORMAT_CAT,
-                         LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_DCAT):
+        elif fmt not in (ListFormat.RAW, ListFormat.INFO,
+                         ListFormat.INF, ListFormat.CAT,
+                         ListFormat.JSON, ListFormat.XML, ListFormat.DCAT):
             raise ValueError("invalid listing format")
 
-    def listing(self, fmt: Union[int, str] = None,
+    def listing(self, fmt: ListFormatUnion = None,
                 pattern: PatternUnion = None,
-                side_header_fmt: Union[int, str] = None,
-                side_footer_fmt: Union[int, str] = None,
-                img_header_fmt: Union[int, str] = None,
-                img_footer_fmt: Union[int, str] = None,
+                side_header_fmt: ListFormatUnion = None,
+                side_footer_fmt: ListFormatUnion = None,
+                img_header_fmt: ListFormatUnion = None,
+                img_footer_fmt: ListFormatUnion = None,
                 sort: bool = None, silent=False, file=sys.stdout) -> None:
         """Print file listing for all (single or both) disk sides.
 
         Print catalog listing using predefined format or custom
         formatting strings.
-
-        Predefined formats are:
-            LIST_FORMAT_RAW (0)   - Lists file names, no header.
-            LIST_FORMAT_INFO (1)  - As displayed by *INFO command.
-            LIST_FORMAT_INF (2)   - As in .inf files.
-            LIST_FORMAT_CAT (3)   - As displayed by *CAT command.
-            LIST_FORMAT_JSON (4)  - Generate JSON
-            LIST_FORMAT_XML (5)   - Generate XML
-            LIST_FORMAT_TABLE (6) - Fixed-width text table.
-            LIST_FORMAT_DCAT (7)  - As displayed by MMC *DCAT command.
 
         For list of keys available for custom image header formatting string see
         Image.PROPERTY_NAMES.
@@ -1448,11 +1425,11 @@ class Image:
 
         Args:
             fmt: Optional; Listing format. Value can be one of
-                LIST_FORMAT_... constants or custom formatting string.
+                ListFormat enum or custom formatting string.
             pattern: Optional; List only files matching pattern (see Entry.match).
             side_header_fmt: Optional; Selected side listing header format.
-                Value can be one of LIST_FORMAT_... constants or
-                custom formatting string. Default is `fmt` if it is one for
+                Value can be one of ListFormat enum or
+                custom formatting string. Default is the same as ``fmt`` if it is one for
                 predefined formats, otherwise no header.
             side_footer_fmt: Optional; Formatting string for side listing footer.
                 Default is no side listing footer.
@@ -1461,7 +1438,7 @@ class Image:
             img_footer_fmt: Optional; Formatting string for image listing footer.
                 Default is no image footer.
             sort: Optional; If this flag is True, displayed files are sorted
-                alphabetically. It is enabled by default for LIST_FORMAT_CAT format
+                alphabetically. It is enabled by default for ListFormat.CAT format
                 and disabled for all other formats.
             silent: Optional; Don't raise exception if a pattern doesn't match any file
             file: Output stream. Default is sys.stdout.
@@ -1472,15 +1449,15 @@ class Image:
         if img_header_fmt is None and not isinstance(fmt, str):
             img_header_fmt = fmt
         if img_header_fmt is not None and img_header_fmt != '':
-            self.listing_header(img_header_fmt, file=file)
+            self._listing_header(img_header_fmt, file=file)
 
-        parsed = self.compile_pattern(pattern)
+        parsed = self._compile_pattern(pattern)
 
-        if fmt == LIST_FORMAT_JSON:
+        if fmt == ListFormat.JSON:
             attrs = self.get_properties(for_format=False, recurse=True,
                                         pattern=parsed, sort=sort, silent=silent)
             print(json_dumps(attrs), file=file)
-        elif fmt == LIST_FORMAT_XML:
+        elif fmt == ListFormat.XML:
             attrs = self.get_properties(for_format=False, recurse=True,
                                         pattern=parsed, sort=sort, silent=silent)
             print(xml_dumps(attrs, "image"), file=file)
@@ -1495,25 +1472,25 @@ class Image:
                 parsed.ensure_matched()
 
         if img_footer_fmt is not None and img_footer_fmt != '':
-            self.listing_header(img_footer_fmt, file=file)
+            self._listing_header(img_footer_fmt, file=file)
 
-    def cat(self, pattern: PatternUnion = None, silent=False, file=sys.stdout) -> None:
+    def cat(self, pattern: PatternUnion = None, *, silent=False, file=sys.stdout) -> None:
         """Generate file listing as produced by *CAT command.
 
         Args:
             pattern: Optional; Only list files matching pattern (see Entry.match).
             file: Output stream. Default is sys.stdout.
         """
-        self.listing(LIST_FORMAT_CAT, pattern, silent=silent, file=file)
+        self.listing(ListFormat.CAT, pattern, silent=silent, file=file)
 
-    def info(self, pattern: PatternUnion = None, silent=False, file=sys.stdout) -> None:
+    def info(self, pattern: PatternUnion = None, *, silent=False, file=sys.stdout) -> None:
         """Generate file listing as produced by *INFO command.
 
         Args:
             pattern: Optional; Only list files matching pattern (see Entry.match).
             file: Output stream. Default is sys.stdout.
         """
-        self.listing(LIST_FORMAT_INFO, pattern, silent=silent, file=file)
+        self.listing(ListFormat.INFO, pattern, silent=silent, file=file)
 
     def get_digest(self, algorithm: str = None) -> str:
         """Generate hexadecimal digest of entire disk image file.
@@ -1536,8 +1513,8 @@ class Image:
         """SHA1 digest of the entire disk image file."""
         return self.get_digest()
 
-    def to_fullname(self, filename: str,
-                    head: int = None) -> Tuple[str, Optional[int]]:
+    def _to_fullname(self, filename: str,
+                     head: int = None) -> Tuple[str, Optional[int]]:
         """Process filename and add directory name if needed.
 
         Extract drive number and prepend current directory name ($) if not
@@ -1552,7 +1529,7 @@ class Image:
         filename = filename.rstrip()
 
         # get drive from filename
-        filename, f_dir, f_head = self.parse_name(filename, False)
+        filename, f_dir, f_head = self._parse_name(filename, False)
 
         # get head number or use default
         if f_head is not None:
@@ -1572,7 +1549,7 @@ class Image:
         filename = "%s.%s" % (f_dir, filename)
 
         # validate filename characters
-        if any(not Entry.isnamechar(ord(c))
+        if any(not Entry._isnamechar(ord(c))
                for c in filename):
             raise ValueError("invalid characters in filename '%s'" % filename)
 
@@ -1587,7 +1564,7 @@ class Image:
             Found entry or None.
         """
         self._not_closed()
-        name, head = self.to_fullname(filename, head)
+        name, head = self._to_fullname(filename, head)
         side = self.get_side(head)
         sides = [side] if side is not None else self.sides
         found_entry = None
@@ -1616,15 +1593,15 @@ class Image:
                 side.files for side in self.sides
                 if default_head is None or side.head == default_head))
 
-        parsed = self.compile_pattern(pattern)
+        parsed = self._compile_pattern(pattern)
         files = [file for side in self.sides
                  for file in side.files
-                 if file.match_parsed(parsed, default_head)]
+                 if file._match_parsed(parsed, default_head)]
         if not silent:
             parsed.ensure_matched()
         return files
 
-    def delete(self, filename: str, ignore_access=False, silent=False,
+    def delete(self, filename: str, *, ignore_access=False, silent=False,
                default_head: int = None) -> bool:
         """Delete single file from floppy disk image.
 
@@ -1647,7 +1624,7 @@ class Image:
         entry.delete(ignore_access)
         return True
 
-    def rename(self, from_name: str, to_name: str, replace=False,
+    def rename(self, from_name: str, to_name: str, *, replace=False,
                ignore_access=False, no_compact=False,
                silent=False, default_head: int = None) -> bool:
         """Rename single file in floppy image.
@@ -1675,12 +1652,12 @@ class Image:
                 raise FileNotFoundError("file '%s' not found" % from_name)
             return False
 
-        from_entry.side.check_valid()
+        from_entry.side._check_valid()
 
         if from_entry.locked and not ignore_access:
             raise PermissionError("file '%s' is locked" % from_entry.fullname)
 
-        to_name, to_head = self.to_fullname(to_name, default_head)
+        to_name, to_head = self._to_fullname(to_name, default_head)
         if to_head is None:
             to_head = from_entry.side.head
 
@@ -1706,15 +1683,15 @@ class Image:
         # Moving file to other side
         else:
             data = from_entry.readall()
-            self.add_file(to_name, data, from_entry.load_address,
-                          from_entry.exec_address, from_entry.locked,
+            self.add_file(to_name, data, load_addr=from_entry.load_address,
+                          exec_addr=from_entry.exec_address, locked=from_entry.locked,
                           replace=replace,
                           ignore_access=ignore_access, no_compact=no_compact,
                           default_head=to_head)
             from_entry.delete(ignore_access)
         return True
 
-    def copy(self, from_name: str, to_name: str, replace=False,
+    def copy(self, from_name: str, to_name: str, *, replace=False,
              ignore_access=False, no_compact=False,
              preserve_attr=False, silent=False,
              default_head: int = None) -> bool:
@@ -1743,9 +1720,9 @@ class Image:
                 raise FileNotFoundError("file '%s' not found" % from_name)
             return False
 
-        from_entry.side.check_valid()
+        from_entry.side._check_valid()
 
-        to_name, to_head = self.to_fullname(to_name, default_head)
+        to_name, to_head = self._to_fullname(to_name, default_head)
         if to_head is None:
             to_head = from_entry.side.head
 
@@ -1768,13 +1745,13 @@ class Image:
 
         locked = preserve_attr and from_entry.locked
         data = from_entry.readall()
-        self.add_file(to_name, data, from_entry.load_address,
-                      from_entry.exec_address, locked, replace=replace,
+        self.add_file(to_name, data, load_addr=from_entry.load_address,
+                      exec_addr=from_entry.exec_address, locked=locked, replace=replace,
                       ignore_access=ignore_access, no_compact=no_compact,
                       default_head=to_head)
         return True
 
-    def destroy(self, pattern: PatternUnion, ignore_access=False,
+    def destroy(self, pattern: PatternUnion, *, ignore_access=False,
                 silent: bool = False, default_head: int = None) -> int:
         """Delete all files matching pattern.
 
@@ -1791,14 +1768,14 @@ class Image:
         if default_head is None:
             default_head = self._default_head
 
-        parsed = self.compile_pattern(pattern)
+        parsed = self._compile_pattern(pattern)
         count = 0
         skipped = 0
         for side in self.sides:
             index = 0
             while index < side.number_of_files:
                 entry = side.get_entry(index)
-                if entry.match_parsed(parsed, default_head):
+                if entry._match_parsed(parsed, default_head):
                     if not entry.locked or ignore_access:
                         entry.delete(ignore_access)
                         count += 1
@@ -1814,7 +1791,7 @@ class Image:
                             % (self.displayname, skipped)))
         return count
 
-    def lock(self, pattern: PatternUnion, silent=False,
+    def lock(self, pattern: PatternUnion, *, silent=False,
              default_head: int = None) -> int:
         """Lock all files matching pattern.
 
@@ -1829,7 +1806,7 @@ class Image:
             file.locked = True
         return count
 
-    def unlock(self, pattern: PatternUnion, silent=False,
+    def unlock(self, pattern: PatternUnion, *, silent=False,
                default_head: int = None) -> int:
         """Unlock all files matching pattern.
 
@@ -1845,14 +1822,11 @@ class Image:
             file.locked = False
         return count
 
-    def add_file(self, filename: str, data: bytes, load_addr: int = None,
+    def add_file(self, filename: str, data: bytes, *, load_addr: int = None,
                  exec_addr: int = None, locked=False, replace=False,
                  ignore_access=False, no_compact=False,
                  default_head: int = None) -> Entry:
         """Add new file to floppy disk image.
-
-        This method raises error if file with the same name already
-        exists.
 
         Args:
             filename: File name.
@@ -1878,7 +1852,7 @@ class Image:
         """
         self._not_closed()
         # pylint: disable=protected-access
-        fullname, head = self.to_fullname(filename, default_head)
+        fullname, head = self._to_fullname(filename, default_head)
         size = len(data)
 
         # If no side specified and file already exist, try to replace
@@ -1896,12 +1870,14 @@ class Image:
             head = 0
 
         side = self.get_side(head)
-        return side._add_entry(fullname, data, load_addr, exec_addr, locked,
-                               replace, ignore_access, no_compact)
+        return side.add_file(fullname, data, load_addr=load_addr,
+                             exec_addr=exec_addr, locked=locked,
+                             replace=replace, ignore_access=ignore_access,
+                             no_compact=no_compact)
 
-    def import_files(self, os_files: Union[str, List[str]],
+    def import_files(self, os_files: Union[str, List[str]], *,
                      dfs_names: Union[str, List[str]] = None,
-                     inf_mode: int = None,
+                     inf_mode: InfMode = None,
                      load_addr: int = None, exec_addr: int = None,
                      locked: bool = None,
                      replace=False, ignore_access=False,
@@ -1917,12 +1893,8 @@ class Image:
             dfs_names: Optional; List of DFS file names or single name. If
                 present must have the same number of elements as os_files
                 parameter.
-            inf_mode: Optional; Inf files processing mode:
-                - INF_MODE_AUTO - read inf files if present;
-                - INF_MODE_ALWAYS - require inf files, fail if not present;
-                - INF_MODE_NEVER - treat all files as data files, don't
-                    look for extra inf files.
-                Default is INF_MODE_AUTO.
+            inf_mode: Optional; Inf files processing mode.
+                Default is InfMode.AUTO.
             load_addr: Optional; File load address. Applies to all files,
                 overrides inf files.
             exec_addr: Optional; File exec address. Applies to all files,
@@ -1951,16 +1923,16 @@ class Image:
         self._not_closed()
 
         if translation is None:
-            translation = TRANSLATION_STANDARD
+            translation = TranslationMode.STANDARD
 
         if inf_mode is None:
-            inf_mode = INF_MODE_ALWAYS
+            inf_mode = InfMode.ALWAYS
 
         # Get and validate characters translation table
         if not isinstance(translation, bytes):
-            if translation == TRANSLATION_STANDARD:
+            if translation == TranslationMode.STANDARD:
                 translation = NAME_STD_TRANS
-            elif translation == TRANSLATION_SAFE:
+            elif translation == TranslationMode.SAFE:
                 translation = NAME_SAFE_TRANS
             else:
                 raise ValueError("invalid translation mode")
@@ -1980,11 +1952,10 @@ class Image:
 
         return translation, inf_mode, output
 
-    def export_files(self, output: str,
-                     files: PatternUnion = None,
+    def export_files(self, output: str, files: PatternUnion = None, *,
                      create_directories=False,
-                     translation: Union[int, bytes] = None,
-                     inf_mode: int = None, include_drive=False,
+                     translation: Union[TranslationMode, bytes] = None,
+                     inf_mode: InfMode = None, include_drive=False,
                      replace=False, continue_on_error=True,
                      verbose=False, silent=False,
                      default_head: int = None) -> int:
@@ -2002,21 +1973,10 @@ class Image:
                 will be automatically created as needed. Otherwise
                 this function will fail if output directory doesn't exist.
             translation: Optional; Mode for translating dfs filename to host
-                filename characters. Can be either ``TRANSLATION_STANDARD``,
-                which replaces characters illegal on Windows with underscore
-                character or ``TRANLATION_SAFE`` which replaces all characters,
-                other than digits and letters, with underscore character.
-                Alternatively, caller can provide custom translation table in
-                form of ``bytes`` object of length 256 which is, in that case,
-                passed directly to ``bytes.translate`` method.
-                Default is ``TRANSLATION_STANDARD``.
-            inf_mode: Optional; Inf files processing mode:
-                - INF_MODE_AUTO - write inf files if load or exec address is not
-                    zero, or host file name is different from dfs name;
-                - INF_MODE_ALWAYS - always write inf files;
-                - INF_MODE_NEVER - never write inf files - file attributes are
-                    not preserved.
-                Default is INF_MODE_ALWAYS.
+                filename characters.
+                Default is ``TranslationMode.STANDARD``.
+            inf_mode: Optional; Inf files processing mode.
+                Default is InfMode.ALWAYS.
             include_drive: Optional; Include drive name (i.e. :0. or :2.) in inf
                 files created from double sided floppy images. The resulting inf
                 files will be incompatible with most software. Use this option
@@ -2060,7 +2020,7 @@ class Image:
 
         return self._mmb_entry.dkill()
 
-    def drestore(self, warn_mode: int = None) -> bool:
+    def drestore(self, warn_mode: WarnMode = None) -> bool:
         """Set disk status in MMB file to initialized."""
         self._not_closed()
 
@@ -2105,7 +2065,7 @@ class Image:
                 if self.index == source.index:
                     raise ValueError("source and destination is the same image file")
             elif (default_head is None or source._default_head is None or
-                    default_head == source._default_head):
+                  default_head == source._default_head):
                 raise ValueError("source and destination is the same image file")
 
     def _validate_backup(self, source: 'Image', default_head: Optional[int]):
@@ -2115,7 +2075,7 @@ class Image:
         if source.tracks > self.tracks:
             raise ValueError("cannot copy 80 tracks floppy to 40 tracks.")
 
-    def backup(self, source: 'Image', warn_mode: int = None,
+    def backup(self, source: 'Image', *, warn_mode: WarnMode = None,
                default_head: int = None):
         """Copy all sectors data from other image.
 
@@ -2156,7 +2116,7 @@ class Image:
 
         self.validate(warn_mode)
 
-    def copy_over(self, source: 'Image', pattern: PatternUnion,
+    def copy_over(self, source: 'Image', pattern: PatternUnion, *,
                   replace=False, ignore_access=False, no_compact=False,
                   change_dir=False, preserve_attr=False,
                   continue_on_error=True, verbose=False, silent=False,
@@ -2191,7 +2151,7 @@ class Image:
         for file in files:
 
             inf = file.get_inf()
-            inf.filename, inf.drive = self.to_fullname(
+            inf.filename, inf.drive = self._to_fullname(
                 file.fullname if not change_dir else file.filename)
             inf.locked = file.locked and preserve_attr
 
@@ -2200,8 +2160,8 @@ class Image:
                 data = file.readall()
 
                 # Add file to disk image
-                self.add_file(inf.filename, data, file.load_address,
-                              file.exec_address,
+                self.add_file(inf.filename, data, load_addr=file.load_address,
+                              exec_addr=file.exec_address,
                               locked=inf.locked, replace=replace,
                               ignore_access=ignore_access,
                               no_compact=no_compact)
@@ -2239,7 +2199,7 @@ class _ImportFiles:
 
     def __init__(self, image: Image, os_files: Union[str, List[str]],
                  dfs_names: Optional[Union[str, List[str]]],
-                 inf_mode: Optional[int], load_addr: Optional[int],
+                 inf_mode: Optional[InfMode], load_addr: Optional[int],
                  exec_addr: Optional[int], locked: Optional[bool],
                  replace: bool, ignore_access: bool,
                  no_compact: bool, continue_on_error: bool,
@@ -2251,8 +2211,8 @@ class _ImportFiles:
             default_head = image._default_head
 
         if inf_mode is None:
-            inf_mode = INF_MODE_AUTO
-        if inf_mode not in (INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER):
+            inf_mode = InfMode.AUTO
+        if inf_mode not in (InfMode.ALWAYS, InfMode.AUTO, InfMode.NEVER):
             raise ValueError('invalid inf mode')
 
         if isinstance(os_files, str):
@@ -2268,7 +2228,7 @@ class _ImportFiles:
         self.image = image
         self.os_files: List[str] = os_files
         self.dfs_names: Optional[List[str]] = dfs_names
-        self.inf_mode: int = inf_mode
+        self.inf_mode: InfMode = inf_mode
         self.load_addr = load_addr
         self.exec_addr = exec_addr
         self.locked = locked
@@ -2296,7 +2256,7 @@ class _ImportFiles:
 
     def _scan_inf_files(self):
         index = 0
-        inf_cache = InfCache()
+        inf_cache = _InfCache()
         fileset: Set[str] = set()
         for file in self.os_files:
             displayfile = file
@@ -2310,7 +2270,7 @@ class _ImportFiles:
                 continue
 
             # Try to find inf file
-            if self.inf_mode != INF_MODE_NEVER:
+            if self.inf_mode != InfMode.NEVER:
                 if file.lower().endswith(".inf"):
                     # Inf file passed - get data file
                     inf = inf_cache.get_inf_by_inf_file(file)
@@ -2325,7 +2285,7 @@ class _ImportFiles:
             # Inf file not found
             if host_file is None:
                 host_file = canonpath(file)
-                if self.inf_mode == INF_MODE_ALWAYS:
+                if self.inf_mode == InfMode.ALWAYS:
                     raise ValueError("missing inf file for %s" % file)
 
             # Add file if not already encountered
@@ -2367,7 +2327,8 @@ class _ImportFiles:
             data = file.read()
 
         # Add file to disk image
-        entry = self.image.add_file(dfs_name, data, load_addr, exec_addr,
+        entry = self.image.add_file(dfs_name, data, load_addr=load_addr,
+                                    exec_addr=exec_addr,
                                     locked=locked, replace=self.replace,
                                     ignore_access=self.ignore_access,
                                     no_compact=self.no_compact,
@@ -2411,28 +2372,28 @@ class _ImportFiles:
 class _ExportFiles:
 
     def __init__(self, image: Image, output: str,
-                 files: PatternUnion,
+                 files: Optional[PatternUnion],
                  create_directories: bool,
-                 translation: Optional[Union[int, bytes]],
-                 inf_mode: Optional[int], include_drive: bool,
+                 translation: Optional[Union[TranslationMode, bytes]],
+                 inf_mode: Optional[InfMode], include_drive: bool,
                  replace: bool, continue_on_error: bool,
                  verbose: bool, silent: bool, default_head: Optional[int]):
         image._not_closed()
 
         if translation is None:
-            translation = TRANSLATION_STANDARD
+            translation = TranslationMode.STANDARD
 
         if inf_mode is None:
-            inf_mode = INF_MODE_ALWAYS
+            inf_mode = InfMode.ALWAYS
 
-        if inf_mode not in (INF_MODE_ALWAYS, INF_MODE_AUTO, INF_MODE_NEVER):
+        if inf_mode not in (InfMode.ALWAYS, InfMode.AUTO, InfMode.NEVER):
             raise ValueError('invalid inf mode')
 
         # Get and validate characters translation table
         if not isinstance(translation, bytes):
-            if translation == TRANSLATION_STANDARD:
+            if translation == TranslationMode.STANDARD:
                 translation = NAME_STD_TRANS
-            elif translation == TRANSLATION_SAFE:
+            elif translation == TranslationMode.SAFE:
                 translation = NAME_SAFE_TRANS
             else:
                 raise ValueError("invalid translation mode")
@@ -2453,14 +2414,14 @@ class _ExportFiles:
         self.files = files
         self.create_directories = create_directories
         self.translation: bytes = translation
-        self.inf_mode: int = inf_mode
+        self.inf_mode: InfMode = inf_mode
         self.include_drive = include_drive
         self.replace = replace
         self.continue_on_error = continue_on_error
         self.verbose = verbose
         self.silent = silent
         self.default_head = default_head
-        self.inf_cache = InfCache()
+        self.inf_cache = _InfCache()
         self.output_set: Set[str] = set()
 
     def _inf_file_clash(self, path: str, inf: Inf, dfs_name: str,
@@ -2504,13 +2465,13 @@ class _ExportFiles:
         return True
 
     def _find_available(self, dirname: str, filename: str, dfs_name: str,
-                        inf_mode: int) -> Tuple[str, Optional[str]]:
+                        inf_mode: InfMode) -> Tuple[str, Optional[str]]:
         """Find available host filename, append numbers if needed."""
 
         done = False
         index = 0
         check_name: Optional[str] = filename
-        use_inf = inf_mode == INF_MODE_ALWAYS
+        use_inf = inf_mode == InfMode.ALWAYS
 
         while not done:
             path = os.path.join(dirname, cast(str, check_name))
@@ -2518,7 +2479,7 @@ class _ExportFiles:
             just_created = canon in self.output_set
             inf_path = None
 
-            if inf_mode != INF_MODE_NEVER:
+            if inf_mode != InfMode.NEVER:
                 inf: Optional[Inf] = self.inf_cache.get_inf_by_host_file(path)
             else:
                 inf = None
@@ -2566,7 +2527,7 @@ class _ExportFiles:
         return self.output.format_map(props)
 
     def _needs_inf(self, entry: Entry, output_name: str, dfs_name: str) -> bool:
-        if self.inf_mode != INF_MODE_AUTO:
+        if self.inf_mode != InfMode.AUTO:
             return False
         if os.path.basename(output_name) != dfs_name:
             return True
@@ -2602,7 +2563,7 @@ class _ExportFiles:
         # Enable inf for auto mode if required
         inf_mode = self.inf_mode
         if self._needs_inf(entry, output_name, dfs_name):
-            inf_mode = INF_MODE_ALWAYS
+            inf_mode = InfMode.ALWAYS
 
         # Check if file exists
         dirname, filename, = os.path.split(output_name)

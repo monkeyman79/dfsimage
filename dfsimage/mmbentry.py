@@ -6,6 +6,8 @@ from .consts import MMB_INDEX_ENTRY_SIZE
 from .consts import MMB_STATUS_OFFSET, MMB_STATUS_LOCKED, MMB_STATUS_UNLOCKED
 from .consts import MMB_STATUS_UNINITIALIZED, MMB_STATUS_UNINITIALIZED_MASK
 
+from .enums import OpenMode, WarnMode
+
 from .misc import MMBWarning
 from .simplewarn import warn
 from .conv import bbc_to_unicode, unicode_to_bbc
@@ -19,19 +21,25 @@ class MMBFileProtocol(Protocol):
 
     # pylint: disable=missing-function-docstring
 
-    def is_entry_modified(self, index: int) -> bool: ...
+    def is_entry_modified(self, index: int) -> bool:
+        ...
 
-    def set_entry_modified(self, index: int, value: bool): ...
+    def set_entry_modified(self, index: int, value: bool):
+        ...
 
-    def incref(self) -> IO[bytes]: ...
+    def incref(self) -> IO[bytes]:
+        ...
 
-    def close(self, save: bool = True): ...
+    def close(self, save: bool = True):
+        ...
 
-    def open_entry(self, entry: Union[int, 'MMBEntry'], open_mode: int = None,
-                   warn_mode: int = None, catalog_only=False): ...
+    def open_entry(self, entry: Union[int, 'MMBEntry'], open_mode: OpenMode = None,
+                   warn_mode: WarnMode = None, catalog_only=False):
+        ...
 
     @property
-    def is_read_only(self) -> bool: ...
+    def is_read_only(self) -> bool:
+        ...
 
     # pylint: enable=missing-function-docstring
 
@@ -48,16 +56,12 @@ class MMBEntry:
                           if dataview is None else dataview)
         self.owner = owner
 
-    def open(self, open_mode: int = None, warn_mode: int = None,
+    def open(self, open_mode: OpenMode = None, warn_mode: WarnMode = None,
              catalog_only=False):
         """Open Image from MMB entry.
 
         Args:
-            open_mode: Optional; File open mode. Can be one of: OPEN_MODE_NEW -
-                initialize image, fail if the image is already initialized,
-                OPEN_MODE_EXISTING - fail if the image is not initialized,
-                OPEN_MODE_ALWAYS - open image whether it is initialized or not.
-                Default is OPEN_MODE_ALWAYS.
+            open_mode: Optional; File open mode. Default is OpenMode.ALWAYS.
             warn_mode: Optional; Warning mode for validation.
             catalog_only: Optional; Open only for reading catalog.
         Returns:

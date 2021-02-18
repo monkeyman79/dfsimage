@@ -7,9 +7,7 @@ from typing import cast
 
 from .simplewarn import warn
 from .consts import SECTOR_SIZE, CATALOG_SECTORS
-from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE, DIGEST_MODE_DATA
-from .consts import LIST_FORMAT_CAT, LIST_FORMAT_INF, LIST_FORMAT_INFO, LIST_FORMAT_RAW
-from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE, LIST_FORMAT_DCAT
+from .enums import DigestMode, ListFormat, ListFormatUnion
 from .misc import bchr, ValidationWarning, LazyString, json_dumps, xml_dumps
 from .conv import bbc_to_unicode, unicode_to_bbc
 
@@ -61,7 +59,7 @@ class Entry:
         self.__name_seq: Optional[int] = None
 
     @staticmethod
-    def isnamechar(char: int) -> bool:
+    def _isnamechar(char: int) -> bool:
         """Validate file name character.
 
         Check if ASCII code belongs to range 32 - 126. Even though characters
@@ -82,7 +80,7 @@ class Entry:
 
     @directory_bytes.setter
     def directory_bytes(self, value: bytes) -> None:
-        if len(value) != 1 or not Entry.isnamechar(value[0]):
+        if len(value) != 1 or not Entry._isnamechar(value[0]):
             raise ValueError("invalid directory name")
         self.side.modified = True
         self.entry1[7] = (self.entry1[7] & 128) | value[0]  # type: ignore
@@ -116,7 +114,7 @@ class Entry:
     @filename_bytes.setter
     def filename_bytes(self, value: bytes) -> None:
         value = value.ljust(7)
-        if len(value) != 7 or any(not Entry.isnamechar(x) for x in value):
+        if len(value) != 7 or any(not Entry._isnamechar(x) for x in value):
             raise ValueError("invalid file name")
         self.side.modified = True
         self.entry1[0:7] = value  # type: ignore
@@ -164,7 +162,7 @@ class Entry:
 
     @fullname.setter
     def fullname(self, value: str) -> None:
-        value = self.side.to_fullname(value)
+        value = self.side._to_fullname(value)
         if len(value) > 1 and value[1] == '.':
             self.directory, _, self.filename = value.partition('.')
         else:
@@ -244,50 +242,50 @@ class Entry:
     @property
     def load_address(self) -> int:
         """File load address."""
-        high = self.get_high_bits(1)
+        high = self._get_high_bits(1)
         if high == 3:
             high = 255
-        return Entry.get_word(self.entry2[0:2]) | (high << 16)
+        return Entry._get_word(self.entry2[0:2]) | (high << 16)
 
     @load_address.setter
     def load_address(self, value: int) -> None:
         high = (value >> 16) & 3
         self.side.modified = True
-        Entry.set_word(self.entry2[0:2], value & 0xFFFF)
-        self.set_high_bits(1, high)
+        Entry._set_word(self.entry2[0:2], value & 0xFFFF)
+        self._set_high_bits(1, high)
 
     @property
     def exec_address(self) -> int:
         """File execution address."""
-        high = self.get_high_bits(3)
+        high = self._get_high_bits(3)
         if high == 3:
             high = 255
-        return Entry.get_word(self.entry2[2:4]) | (high << 16)
+        return Entry._get_word(self.entry2[2:4]) | (high << 16)
 
     @exec_address.setter
     def exec_address(self, value: int) -> None:
         high = (value >> 16) & 3
         self.side.modified = True
-        Entry.set_word(self.entry2[2:4], value & 0xFFFF)
-        self.set_high_bits(3, high)
+        Entry._set_word(self.entry2[2:4], value & 0xFFFF)
+        self._set_high_bits(3, high)
 
     @property
     def size(self) -> int:
         """File length in bytes."""
-        high = self.get_high_bits(2)
-        return Entry.get_word(self.entry2[4:6]) | (high << 16)
+        high = self._get_high_bits(2)
+        return Entry._get_word(self.entry2[4:6]) | (high << 16)
 
     @size.setter
     def size(self, value: int) -> None:
         high = (value >> 16) & 3
         self.side.modified = True
-        Entry.set_word(self.entry2[4:6], value & 0xFFFF)
-        self.set_high_bits(2, high)
+        Entry._set_word(self.entry2[4:6], value & 0xFFFF)
+        self._set_high_bits(2, high)
 
     @property
     def start_sector(self) -> int:
         """Logical number of the first sector containing file data."""
-        high = self.get_high_bits(0)
+        high = self._get_high_bits(0)
         return self.entry2[7] | (high << 8)
 
     @start_sector.setter
@@ -295,7 +293,7 @@ class Entry:
         high = (value >> 8) & 3
         self.side.modified = True
         self.entry2[7] = value & 0xFF  # type: ignore
-        self.set_high_bits(0, high)
+        self._set_high_bits(0, high)
 
     @property
     def sectors_count(self) -> int:
@@ -368,18 +366,11 @@ class Entry:
         """
         self.get_sectors().hexdump(start, size, width, ellipsis, file=file)
 
-    def get_digest(self, mode: int = None, algorithm: str = None) -> str:
+    def get_digest(self, mode: DigestMode = None, algorithm: str = None) -> str:
         """Generate hexadecimal digest of file data.
 
-        Available digest modes are:
-            DIGEST_MODE_ALL (0) - Digest of file data and all attributes.
-            DIGEST_MODE_FILE (2) - Digest of files data including
-                load and execution addresses, but not access mode.
-            DIGEST_MODE_DATA (3) - Digest of file data not including
-                load and execution addresses or access mode.
-
         Args:
-            mode: Optional; Digest mode. Default is DIGEST_MODE_FILE.
+            mode: Optional; Digest mode. Default is DigestMode.FILE.
             algorithm: Optional; Algorithm to use instead of the default SHA1.
         Returns:
             Hexadecimal digest string.
@@ -390,14 +381,14 @@ class Entry:
         if algorithm is None:
             algorithm = 'sha1'
         if mode is None:
-            mode = DIGEST_MODE_FILE
+            mode = DigestMode.FILE
         data = self.readall()
         loadbytes = (self.load_address & 0x3FFFF).to_bytes(3, 'little')
         execbytes = (self.exec_address & 0x3FFFF).to_bytes(3, 'little')
         locked = self.locked
-        if mode in (DIGEST_MODE_ALL, DIGEST_MODE_USED):
+        if mode in (DigestMode.ALL, DigestMode.USED):
             data = b''.join((loadbytes, execbytes, bchr(locked), data))
-        elif mode == DIGEST_MODE_FILE:
+        elif mode == DigestMode.FILE:
             data = b''.join((loadbytes, execbytes, data))
         return hashlib.new(algorithm, data,
                            usedforsecurity=False).hexdigest()  # type: ignore[call-arg]
@@ -411,7 +402,7 @@ class Entry:
         """
         if self.index >= self.side.number_of_files:
             return ''
-        return self.get_digest(DIGEST_MODE_FILE)
+        return self.get_digest(DigestMode.FILE)
 
     @property
     def sha1data(self) -> str:
@@ -422,7 +413,7 @@ class Entry:
         """
         if self.index >= self.side.number_of_files:
             return ''
-        return self.get_digest(DIGEST_MODE_DATA)
+        return self.get_digest(DigestMode.DATA)
 
     @property
     def sha1all(self) -> str:
@@ -433,9 +424,9 @@ class Entry:
         """
         if self.index >= self.side.number_of_files:
             return ''
-        return self.get_digest(DIGEST_MODE_ALL)
+        return self.get_digest(DigestMode.ALL)
 
-    def clear(self) -> None:
+    def _clear(self) -> None:
         """Clear catalog entry."""
         self.side.modified = True
         self.entry1[:] = bytes(8)  # type: ignore
@@ -451,12 +442,12 @@ class Entry:
             A boolean indicating if entry is valid.
         """
         isvalid = True
-        if any(not Entry.isnamechar(x) for x in self.entry1[0:7]):
+        if any(not Entry._isnamechar(x) for x in self.entry1[0:7]):
             warn(ValidationWarning("Invalid file name in catalog entry #%d" %
                                    (self.index + 1)))
             # Invalid file names happen. Issue warning, but don't invalidate disk.
             # isvalid = False
-        if (isvalid or warnall) and not Entry.isnamechar((self.entry1[7] & 127)):
+        if (isvalid or warnall) and not Entry._isnamechar((self.entry1[7] & 127)):
             warn(ValidationWarning("Invalid directory name in catalog entry #%d" %
                                    (self.index + 1)))
             # Invalid file names happen. Issue warning, but don't invalidate disk.
@@ -474,7 +465,7 @@ class Entry:
             isvalid = False
         return isvalid
 
-    def get_high_bits(self, index: int) -> int:
+    def _get_high_bits(self, index: int) -> int:
         """Get bit field from high bits byte.
 
         High bits byte contains highest bits of file attributes. This method
@@ -491,7 +482,7 @@ class Entry:
         """
         return (self.entry2[6] >> (2 * index)) & 3
 
-    def set_high_bits(self, index: int, value: int) -> None:
+    def _set_high_bits(self, index: int, value: int) -> None:
         """Set bit field in high bits byte.
 
         This method is used internally by property methods.
@@ -615,49 +606,39 @@ class Entry:
 
         return {**attrs, **redund_attrs}
 
-    def listing_entry(self, fmt=None) -> str:
+    def listing_entry(self, fmt: ListFormatUnion = None) -> str:
         """Generate catalog listing entry line according to selected format.
 
-        Predefined formats are:
-            LIST_FORMAT_RAW (0)   - Raw text - only full name.
-            LIST_FORMAT_INFO (1)  - As displayed by *INFO command.
-            LIST_FORMAT_INF (2)   - As in .inf files.
-            LIST_FORMAT_CAT (3)   - As displayed by *CAT command.
-            LIST_FORMAT_JSON (4)  - JSON
-            LIST_FORMAT_XML (5)   - XML
-            LIST_FORMAT_TABLE (6) - Fixed-width text table.
-            LIST_FORMAT_DCAT (7)  - Empty (only disk header is displayed)
-
         Args:
-            fmt: Optional; Selected format. Value can be one of LIST_FORMAT_...
-                constant or custom formatting string.
+            fmt: Optional; Selected format. Value can be one of ListFormat enum
+                or custom formatting string.
         """
         if fmt is None:
-            fmt = LIST_FORMAT_INFO
-        if fmt == LIST_FORMAT_TABLE:
+            fmt = ListFormat.INFO
+        if fmt == ListFormat.TABLE:
             fmt = Entry.TABLE_FORMAT
         if not isinstance(fmt, str):
-            if fmt == LIST_FORMAT_RAW:
+            if fmt == ListFormat.RAW:
                 line = self.fullname
-            elif fmt == LIST_FORMAT_INFO:
+            elif fmt == ListFormat.INFO:
                 access = "L" if self.locked else " "
                 line = ('%-10s %1s  %06X %06X %06X %03X' %
                         (self.fullname, access, self.load_address,
                          self.exec_address, self.size, self.start_sector))
-            elif fmt == LIST_FORMAT_INF:
+            elif fmt == ListFormat.INF:
                 line = str(self.get_inf())
-            elif fmt == LIST_FORMAT_CAT:
+            elif fmt == ListFormat.CAT:
                 directory = self.directory
                 access = "L" if self.locked else " "
                 dirstr = directory + '.' if directory != self.side.image.current_dir else ''
                 line = ('%4s%-7s  %1s' % (dirstr, self.filename, access)).ljust(15)
-            elif fmt == LIST_FORMAT_JSON:
+            elif fmt == ListFormat.JSON:
                 attrs = self.get_properties(for_format=False, level=0)
                 line = json_dumps(attrs)
-            elif fmt == LIST_FORMAT_XML:
+            elif fmt == ListFormat.XML:
                 attrs = self.get_properties(for_format=False, level=0)
                 line = xml_dumps(attrs, "file")
-            elif fmt == LIST_FORMAT_DCAT:
+            elif fmt == ListFormat.DCAT:
                 line = ''
             else:
                 raise ValueError("invalid listing format")
@@ -671,7 +652,7 @@ class Entry:
     @property
     def info(self) -> str:
         """Info listing line."""
-        return self.listing_entry(LIST_FORMAT_INFO)
+        return self.listing_entry(ListFormat.INFO)
 
     @property
     def inf(self) -> str:
@@ -733,9 +714,9 @@ class Entry:
         pattern.match_count += 1
         return True
 
-    def match_parsed(self,
-                     parsed_patterns: Optional[PatternList],
-                     default_head: int = None) -> bool:
+    def _match_parsed(self,
+                      parsed_patterns: Optional[PatternList],
+                      default_head: int = None) -> bool:
         """Test whether the entry matches any on the parsed pattern list."""
         if parsed_patterns is None:
             return default_head is None or default_head == self.head
@@ -756,12 +737,7 @@ class Entry:
         if pattern is None:
             return default_head is None or default_head == self.head
 
-        return self.match_parsed(self.side.image.compile_pattern(pattern))
-
-    @staticmethod
-    def get_word(buffer: memoryview) -> int:
-        """Read unsigned short integer value from two-bytes buffer with little-endian byte order."""
-        return int.from_bytes(buffer, 'little')
+        return self._match_parsed(self.side.image._compile_pattern(pattern))
 
     def delete(self, ignore_access=False):
         """Delete file.
@@ -777,6 +753,11 @@ class Entry:
         self.side._remove_entry(self.index)
 
     @staticmethod
-    def set_word(buffer: memoryview, value: int) -> None:
+    def _get_word(buffer: memoryview) -> int:
+        """Read unsigned short integer value from two-bytes buffer with little-endian byte order."""
+        return int.from_bytes(buffer, 'little')
+
+    @staticmethod
+    def _set_word(buffer: memoryview, value: int) -> None:
         """Write unsigned short integer value to two-bytes buffer in little-endian byte order."""
         buffer[:] = value.to_bytes(2, 'little')  # type: ignore

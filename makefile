@@ -1,6 +1,6 @@
 .PHONY: package venv
 
-VERSION=0.9rc2
+VERSION=0.9rc3
 
 venv: venv/pyvenv.cfg
 
@@ -22,5 +22,5 @@ venv/pyvenv.cfg: dist/dfsimage-$(VERSION).tar.gz
 dist/dfsimage-$(VERSION).tar.gz:
 	python -m build
 
-doc/_build/.stamp: readme.rst doc/conf.py
+doc/_build/.stamp: readme.rst doc/*.rst doc/conf.py
 	python -m sphinx doc doc/_build && touch $@

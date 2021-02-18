@@ -8,7 +8,7 @@ from .simplewarn import warn
 from .misc import InfWarning
 
 
-def foldfilecase(dirname: str, file: str) -> str:
+def _foldfilecase(dirname: str, file: str) -> str:
     """Normalize the file name letter case the hard way for WSL."""
     path = os.path.join(dirname, file)
     l_file = file.lower()
@@ -25,7 +25,7 @@ def foldfilecase(dirname: str, file: str) -> str:
     return l_file
 
 
-def foldcase(path: str) -> str:
+def _foldcase(path: str) -> str:
     """Normalize the absolute path letter case the hard way for WSL."""
     if path.lower() == path:
         return path
@@ -54,7 +54,7 @@ def foldcase(path: str) -> str:
         return head
 
     # Try folding preceding part
-    return os.path.join(foldcase(head), tail)
+    return os.path.join(_foldcase(head), tail)
 
 
 def canonpath(path: str) -> str:
@@ -64,7 +64,7 @@ def canonpath(path: str) -> str:
     path parts on WSL.
     """
     path = os.path.normcase(os.path.realpath(path))
-    return foldcase(path)
+    return _foldcase(path)
 
 
 class Inf:
@@ -319,7 +319,7 @@ class Inf:
             raise
 
 
-class InfDirectoryCache:
+class _InfDirectoryCache:
     """Cache all inf files in a single directory."""
 
     def __init__(self, path: str) -> None:
@@ -350,7 +350,7 @@ class InfDirectoryCache:
                     continue
 
                 # Convert to lower case if possible
-                name = foldfilecase(self.dir_path, entry.name)
+                name = _foldfilecase(self.dir_path, entry.name)
                 full_path = os.path.realpath(os.path.join(self.dir_path, entry.name))
 
                 # Try to load the file, on exception issue warning and continue
@@ -420,13 +420,13 @@ class InfDirectoryCache:
         return self.inf_map.get(inf_file)
 
 
-class InfCache:
+class _InfCache:
     """Cache inf files in all visited directories."""
 
     def __init__(self):
-        self.directory_map: Dict[str, InfDirectoryCache] = {}
+        self.directory_map: Dict[str, _InfDirectoryCache] = {}
 
-    def get_directory_cache(self, path: str) -> InfDirectoryCache:
+    def get_directory_cache(self, path: str) -> _InfDirectoryCache:
         """Get or create per-direcotry cache.
 
         Args:
@@ -438,7 +438,7 @@ class InfCache:
         cache = self.directory_map.get(path)
         if cache is not None:
             return cache
-        cache = InfDirectoryCache(path)
+        cache = _InfDirectoryCache(path)
         self.directory_map[path] = cache
         return cache
 

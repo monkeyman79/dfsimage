@@ -14,19 +14,12 @@ from .wildparse.argparse import SUPPRESS, CustomHelpFormat
 
 from .args import MyHelpFormatter
 
-from .consts import LIST_FORMAT_INF, LIST_FORMAT_CAT, LIST_FORMAT_INFO, LIST_FORMAT_RAW
-from .consts import LIST_FORMAT_JSON, LIST_FORMAT_XML, LIST_FORMAT_TABLE, LIST_FORMAT_DCAT
-from .consts import OPEN_MODE_ALWAYS, OPEN_MODE_EXISTING, OPEN_MODE_NEW
-from .consts import WARN_NONE, WARN_ALL
-from .consts import SIZE_OPTION_EXPAND, SIZE_OPTION_SHRINK, SIZE_OPTION_KEEP
-from .consts import INF_MODE_ALWAYS, INF_MODE_NEVER, INF_MODE_AUTO
-from .consts import TRANSLATION_STANDARD, TRANSLATION_SAFE
-from .consts import DIGEST_MODE_ALL, DIGEST_MODE_USED, DIGEST_MODE_FILE, DIGEST_MODE_DATA
-
 from .conv import bbc_to_unicode, unicode_to_bbc
 from .misc import json_dumps, xml_dumps, get_digest, is_mmb_file
 from .simplewarn import warn
 
+from .enums import ListFormat, OpenMode, WarnMode, SizeOption, InfMode
+from .enums import TranslationMode, DigestMode
 from .sectors import Sectors
 from .entry import Entry
 from .side import Side
@@ -253,7 +246,7 @@ class _MyHelpFormatAction(argparse.Action):
         parser.exit()
 
 
-def glob_or_keep(pathname: str) -> List[str]:
+def _glob_or_keep(pathname: str) -> List[str]:
     """Use globbing function on pathname, return original if nothing matches."""
     result = glob.glob(pathname)
     if len(result) == 0:
@@ -286,7 +279,7 @@ class _AddImageAction(argparse.Action):
             elif selected == "from":
                 if namespace.from_image is not None:
                     parser.error("exactly one source image is required")
-                if namespace.open_mode is not None and namespace.open_mode != OPEN_MODE_EXISTING:
+                if namespace.open_mode is not None and namespace.open_mode != OpenMode.EXISTING:
                     parser.error("arguments --new and --always are invalid "
                                  "for source image")
                 images = []
@@ -324,7 +317,7 @@ class _AddImageAction(argparse.Action):
 
         expanded_values = []
         for pathname in values:
-            expanded_values.extend(glob_or_keep(pathname))
+            expanded_values.extend(_glob_or_keep(pathname))
         values = expanded_values
 
         for name in values:
@@ -365,7 +358,7 @@ class _AddImportAction(argparse.Action):
 
         expanded_values = []
         for pathname in values:
-            expanded_values.extend(glob_or_keep(pathname))
+            expanded_values.extend(_glob_or_keep(pathname))
         values = expanded_values
 
         if (load_addr is not None or exec_addr is not None
@@ -394,7 +387,7 @@ def _open_from_params(params, for_write, warn_mode, existing=False):
     linear = params["linear"]
     open_mode = params["open_mode"]
     if existing:
-        open_mode = OPEN_MODE_EXISTING
+        open_mode = OpenMode.EXISTING
 
     image = Image.open(name, for_write, open_mode, sides, tracks, linear,
                        warn_mode=warn_mode, index=index)
@@ -417,10 +410,10 @@ def _conv_format(fmt):
     if not isinstance(fmt, str):
         return fmt
     fmt2 = fmt.lower()
-    fmt = {'cat': LIST_FORMAT_CAT, 'info': LIST_FORMAT_INFO,
-           'inf': LIST_FORMAT_INF, 'raw': LIST_FORMAT_RAW,
-           'json': LIST_FORMAT_JSON, 'xml': LIST_FORMAT_XML,
-           'table': LIST_FORMAT_TABLE, 'dcat': LIST_FORMAT_DCAT}.get(fmt2, fmt)
+    fmt = {'cat': ListFormat.CAT, 'info': ListFormat.INFO,
+           'inf': ListFormat.INF, 'raw': ListFormat.RAW,
+           'json': ListFormat.JSON, 'xml': ListFormat.XML,
+           'table': ListFormat.TABLE, 'dcat': ListFormat.DCAT}.get(fmt2, fmt)
     return fmt
 
 
@@ -429,9 +422,9 @@ class _Process:
         self.images = namespace.images
         self.warn_mode = getattr(namespace, "warn_mode", None)
         if self.warn_mode == "none":
-            self.warn_mode = WARN_NONE
+            self.warn_mode = WarnMode.NONE
         elif self.warn_mode == "all":
-            self.warn_mode = WARN_ALL
+            self.warn_mode = WarnMode.ALL
         else:
             self.warn_mode = None
         self.cont = getattr(namespace, "cont", None)
@@ -498,7 +491,7 @@ def _get_mmb(name: str, index: Optional[int]):
 class _ListProcess(_Process):
 
     def _enable_only_images(self):
-        if self.fmt not in (LIST_FORMAT_JSON, LIST_FORMAT_XML):
+        if self.fmt not in (ListFormat.JSON, ListFormat.XML):
             if self.img_header_fmt is None:
                 self.img_header_fmt = self.fmt
             self.fmt = ''
@@ -514,7 +507,7 @@ class _ListProcess(_Process):
 
     def _enable_only_sides(self):
         self.root_node = "sides"
-        if self.fmt not in (LIST_FORMAT_JSON, LIST_FORMAT_XML):
+        if self.fmt not in (ListFormat.JSON, ListFormat.XML):
             if self.header_fmt is None:
                 self.header_fmt = self.fmt
             self.fmt = ''
@@ -553,7 +546,7 @@ class _ListProcess(_Process):
             extra["start_index"] = start
         if end is not None:
             extra["end_index"] = end
-        if self.fmt in (LIST_FORMAT_JSON, LIST_FORMAT_XML):
+        if self.fmt in (ListFormat.JSON, ListFormat.XML):
             if self.only_images:
                 prop = image.get_properties(for_format=False, recurse=False, **extra)
                 self.tree.append(prop)
@@ -593,9 +586,9 @@ class _ListProcess(_Process):
                         raise
                     warn(err)
                     continue
-        if self.fmt == LIST_FORMAT_JSON:
+        if self.fmt == ListFormat.JSON:
             print(json_dumps(self.tree), end='\n')
-        if self.fmt == LIST_FORMAT_XML:
+        if self.fmt == ListFormat.XML:
             print(xml_dumps(self.tree, self.root_node))
 
 
@@ -620,13 +613,13 @@ class _DumpProcess(_Process):
         if mode is None:
             self.mode = None
         elif mode == "all":
-            self.mode = DIGEST_MODE_ALL
+            self.mode = DigestMode.ALL
         elif mode == "used":
-            self.mode = DIGEST_MODE_USED
+            self.mode = DigestMode.USED
         elif mode == "file":
-            self.mode = DIGEST_MODE_FILE
+            self.mode = DigestMode.FILE
         elif mode == "data":
-            self.mode = DIGEST_MODE_DATA
+            self.mode = DigestMode.DATA
         else:
             raise ValueError("invalid digest mode")
         self.algorithm = getattr(namespace, "algorithm", None)
@@ -820,8 +813,8 @@ def _digest_command(namespace, parser):
 class _ModifyProcess(_Process):
     def __init__(self, namespace, _parser):
         super().__init__(namespace)
-        self.save_option = (SIZE_OPTION_EXPAND if namespace.expand
-                            else SIZE_OPTION_SHRINK if namespace.shrink
+        self.save_option = (SizeOption.EXPAND if namespace.expand
+                            else SizeOption.SHRINK if namespace.shrink
                             else None)
         self.compact = getattr(namespace, "compact", None)
         self.dlock = getattr(namespace, "dlock", None)
@@ -831,13 +824,13 @@ class _ModifyProcess(_Process):
         self.title = getattr(namespace, "title", None)
         self.bootopt = getattr(namespace, "bootopt", None)
         self.sequence = getattr(namespace, "sequence", None)
-        self.inf_mode = INF_MODE_AUTO
+        self.inf_mode = InfMode.AUTO
         if hasattr(namespace, "inf"):
             inf = getattr(namespace, "inf")
             if inf == "always":
-                self.inf_mode = INF_MODE_ALWAYS
+                self.inf_mode = InfMode.ALWAYS
             elif inf == "never":
-                self.inf_mode = INF_MODE_NEVER
+                self.inf_mode = InfMode.NEVER
         self.no_compact = True if self.compact is False else None
         self.ignore_access = getattr(namespace, "ignore_access", None)
         self.replace = getattr(namespace, "replace", None)
@@ -935,16 +928,19 @@ class _ModifyProcess(_Process):
                 names = [names]
 
             for name in names:
-                image.add_file(name, self._read_stdin(), load_addr, exec_addr,
-                               locked, self.replace, self.ignore_access, self.no_compact)
+                image.add_file(name, self._read_stdin(), load_addr=load_addr,
+                               exec_addr=exec_addr, locked=locked,
+                               replace=self.replace,
+                               ignore_access=self.ignore_access,
+                               no_compact=self.no_compact)
 
     def _build_all(self, image: Image):
         sectors = Sectors(image, [], 0, 0)
         for side in image.default_sides:
             sectors.extend(side.get_all_sectors())
         sectors.writeall(self._read_stdin())
-        if self.warn_mode != WARN_NONE:
-            image.validate(self.warn_mode == WARN_ALL)
+        if self.warn_mode != WarnMode.NONE:
+            image.validate(self.warn_mode == WarnMode.ALL)
 
     def _build_sectors(self, image: Image):
         if image.default_side is None:
@@ -961,8 +957,8 @@ class _ModifyProcess(_Process):
             sectors = image.default_sides[0].get_sectors(track, sect, endtrack, endsect+1)
             sectors.writeall(self._read_stdin())
 
-        if self.warn_mode != WARN_NONE:
-            image.validate(self.warn_mode == WARN_ALL)
+        if self.warn_mode != WarnMode.NONE:
+            image.validate(self.warn_mode == WarnMode.ALL)
 
     def _build_tracks(self, image: Image):
         if image.default_side is None:
@@ -978,8 +974,8 @@ class _ModifyProcess(_Process):
             sectors = image.default_sides[0].get_sectors(track, 0, endtrack+1, 0)
             sectors.writeall(self._read_stdin())
 
-        if self.warn_mode != WARN_NONE:
-            image.validate(self.warn_mode == WARN_ALL)
+        if self.warn_mode != WarnMode.NONE:
+            image.validate(self.warn_mode == WarnMode.ALL)
 
     def _cmd_build(self, image: Image):
         if self.files is not None and len(self.files) != 0:
@@ -1072,7 +1068,7 @@ class _ModifyProcess(_Process):
     def _cmd_backup(self, image: Image):
         with _open_from_params(self.from_image[0], for_write=False,
                                warn_mode=self.warn_mode2) as src_image:
-            image.backup(source=src_image, warn_mode=WARN_NONE)
+            image.backup(source=src_image, warn_mode=WarnMode.NONE)
             if self.verbose:
                 print("%s: copied from %s" % (image.displayname, src_image.displayname))
 
@@ -1119,7 +1115,7 @@ class _ModifyProcess(_Process):
             if self.verbose:
                 print("%s: image locked" % image.displayname)
 
-        if image.modified or self.save_option != SIZE_OPTION_KEEP:
+        if image.modified or self.save_option != SizeOption.KEEP:
             image.save(self.save_option)
         image.close()
 
@@ -1140,7 +1136,7 @@ def _format_command(namespace, parser):
     proc = _ModifyProcess(namespace, parser)
     # Skip validation if contents are going to be overwritten
     proc.warn_mode2 = proc.warn_mode
-    proc.warn_mode = WARN_NONE
+    proc.warn_mode = WarnMode.NONE
     proc.command = proc._cmd_format
     proc.run()
 
@@ -1155,7 +1151,7 @@ def _drestore_command(namespace, parser):
     proc = _ModifyProcess(namespace, parser)
     # Skip validation on open
     proc.warn_mode2 = proc.warn_mode
-    proc.warn_mode = WARN_NONE
+    proc.warn_mode = WarnMode.NONE
     proc.command = proc._cmd_drestore
     proc.run()
 
@@ -1214,7 +1210,7 @@ def _backup_command(namespace, parser):
     proc = _ModifyProcess(namespace, parser)
     # Skip validation if contents are going to be overwritten
     proc.warn_mode2 = proc.warn_mode
-    proc.warn_mode = WARN_NONE
+    proc.warn_mode = WarnMode.NONE
     proc.command = proc._cmd_backup
     proc.run()
 
@@ -1257,21 +1253,21 @@ class _ExportProcess(_Process):
         self.pattern = namespace.pattern
         if len(self.pattern) == 0:
             self.pattern = None
-        self.inf_mode = INF_MODE_ALWAYS
+        self.inf_mode = InfMode.ALWAYS
         if hasattr(namespace, "inf"):
             inf = getattr(namespace, "inf")
             if inf == "auto":
-                self.inf_mode = INF_MODE_AUTO
+                self.inf_mode = InfMode.AUTO
             elif inf == "never":
-                self.inf_mode = INF_MODE_NEVER
+                self.inf_mode = InfMode.NEVER
         self.output = namespace.output
         self.replace = getattr(namespace, "replace", None)
         self.create_dir = getattr(namespace, "create_dir", None)
-        self.xlate = TRANSLATION_STANDARD
+        self.xlate = TranslationMode.STANDARD
         if hasattr(namespace, "translation"):
             xlate = getattr(namespace, "translation")
             if xlate == "safe":
-                self.xlate = TRANSLATION_SAFE
+                self.xlate = TranslationMode.SAFE
         self.include_drive = getattr(namespace, "include_drive_name", None)
 
     def _export_image(self, image):
@@ -1496,11 +1492,11 @@ def _add_image_options(parser, existing, nargs, template=False, command=None):
     add = image_options.add_argument
     if not existing:
         add('--new', help='Create new image file. Fail if file already exists.',
-            action=_StoreConstOnceAction, const=OPEN_MODE_NEW, dest='open_mode')
+            action=_StoreConstOnceAction, const=OpenMode.NEW, dest='open_mode')
         add('--existing', help="Open existing image. Fail if file doesn't exist.",
-            action=_StoreConstOnceAction, const=OPEN_MODE_EXISTING, dest='open_mode')
+            action=_StoreConstOnceAction, const=OpenMode.EXISTING, dest='open_mode')
         add('--always', help="Create new image or open existing image,. This is the default.",
-            action=_StoreConstOnceAction, const=OPEN_MODE_ALWAYS, dest='open_mode')
+            action=_StoreConstOnceAction, const=OpenMode.ALWAYS, dest='open_mode')
 
     if template:
         add('-80', '-40', '--tracks', choices=[80, 40], help=TRACKS_LONG_HELP)
@@ -1542,7 +1538,7 @@ def _add_image_options(parser, existing, nargs, template=False, command=None):
     _add_image_arg(parser, nargs)
 
 
-def hexint(string):
+def _hexint(string):
     """Convert argument to hex."""
     return int(string, 16)
 
@@ -1563,9 +1559,9 @@ def _add_import_file_options(parser, command):
                                                     description=help)
     import_file_options.group_usage = True
     add = import_file_options.add_argument
-    add('--load-address', metavar='ADDRESS', type=hexint,
+    add('--load-address', metavar='ADDRESS', type=_hexint,
         help="Load address for the following file. Must be a hexadecimal number.")
-    add('--exec-address', metavar='ADDRESS', type=hexint,
+    add('--exec-address', metavar='ADDRESS', type=_hexint,
         help="Exec address for the following file. Must be a hexadecimal number.")
     add('--locked', action=argparse.BooleanOptionalAction,  # pylint: disable=no-member
         help="Set locked attribute.")
