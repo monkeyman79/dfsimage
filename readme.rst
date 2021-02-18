@@ -465,7 +465,7 @@ List files or disk image properties.
 .. code-block:: sh
 
   dfsimage cat image.ssd
-  dfsimage list --image-header="Image {image_filename}" --header="Side {side}" --list-format="{fullname:12} {sha1}" img/*.dsd
+  dfsimage list --image-header="Image {filename}" --header="Side {side}" --list-format="{fullname:12} {sha1}" img/*.dsd
   dfsimage index -f json images/*.ssd images/*.dsd > index.json
 
 **listing options**:
@@ -502,7 +502,7 @@ List files or disk image properties.
 ``--image-header-format=CUSTOM_FORMAT``
   Listing header common for entire image file.
 
-  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{image_basename} {tracks}"``.
+  * *CUSTOM_FORMAT* - Formatting string - e.g. ``"{basename} {tracks}"``.
 
   See `image file properties`_ for list of keywords available for custom format.
 ``--image-footer-format=CUSTOM_FORMAT``
