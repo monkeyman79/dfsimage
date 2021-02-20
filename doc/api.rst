@@ -13,6 +13,36 @@ Side class
 .. autoclass:: dfsimage.Side
    :members:
 
+Entry class
+-----------
+
+.. autoclass:: dfsimage.Entry
+   :members:
+
+Inf class
+---------
+
+.. autoclass:: dfsimage.Inf
+   :members:
+
+Sectors class
+-------------
+
+.. autoclass:: dfsimage.Sectors
+   :members:
+
+MMBFile class
+-------------
+
+.. autoclass:: dfsimage.MMBFile
+   :members:
+
+MMBEntry class
+--------------
+
+.. autoclass:: dfsimage.MMBEntry
+   :members:
+
 Enumerations
 ------------
 

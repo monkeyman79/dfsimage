@@ -5,10 +5,9 @@
 # pylint: disable = multiple-statements
 
 from typing import Protocol, Callable, TypeVar, Tuple, Optional
-from typing import Union, List, Dict
+from typing import Union, Dict
 from typing import overload
 
-from .enums import InfMode, WarnMode, TranslationMode
 from .mmbentry import MMBEntry
 from .sectors import Sectors
 
@@ -82,65 +81,6 @@ class ImageProtocol(Protocol):
 
     def get_logical_sectors(self, head: int, start_logical_sector: int,
                             end_logical_sector: int, used_size: int = None) -> Sectors: ...
-
-    def add_file(self, filename: str, data: bytes, *, load_addr: int = None,
-                 exec_addr: int = None, locked=False, replace=False,
-                 ignore_access=False, no_compact=False,
-                 default_head: int = None): ...
-
-    def delete(self, filename: str, *,
-               ignore_access=False, silent=False,
-               default_head: int = None) -> bool: ...
-
-    def rename(self, from_name: str, to_name: str, *,
-               replace=False,
-               ignore_access=False, no_compact=False, silent=False,
-               default_head: int = None) -> bool: ...
-
-    def copy(self, from_name: str, to_name: str, *,
-             replace=False,
-             ignore_access=False, no_compact=False,
-             preserve_attr=False, silent=False,
-             default_head: int = None) -> bool: ...
-
-    def destroy(self, pattern: PatternUnion, *,
-                ignore_access=False,
-                silent=False, default_head: int = None) -> int: ...
-
-    def lock(self, pattern: PatternUnion, *,
-             silent=False,
-             default_head: int = None) -> int: ...
-
-    def unlock(self, pattern: PatternUnion, *,
-               silent=False,
-               default_head: int = None) -> int: ...
-
-    def import_files(self, os_files: Union[str, List[str]], *,
-                     dfs_names: Union[str, List[str]] = None,
-                     inf_mode: InfMode = None,
-                     load_addr: int = None, exec_addr: int = None,
-                     locked: bool = None,
-                     replace=False, ignore_access=False,
-                     no_compact=False, continue_on_error=False,
-                     verbose=False, silent=False,
-                     default_head: int = None) -> int: ...
-
-    def export_files(self, output: str, files: PatternUnion = None, *,
-                     create_directories=False,
-                     translation: Union[TranslationMode, bytes] = None,
-                     inf_mode: InfMode = None, include_drive=False,
-                     replace=False, continue_on_error=False,
-                     verbose=False, silent=False,
-                     default_head: int = None) -> int: ...
-
-    def backup(self, source, *,
-               warn_mode: WarnMode = None, default_head: int = None): ...
-
-    def copy_over(self, source, pattern: PatternUnion, *,
-                  replace=False, ignore_access=False, no_compact=False,
-                  change_dir=False, preserve_attr=False,
-                  continue_on_error=False, verbose=False, silent=False,
-                  default_head: int = None) -> int: ...
 
 
 class SideProtocol(Protocol):

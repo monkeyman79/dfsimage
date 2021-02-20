@@ -50,7 +50,9 @@ class Entry:
             entry1: A 'memoryview' to file entry part in first catalog sector.
             entry2: A 'memoryview' to file entry part in second catalog sector.
         """
+        #: :class:`Side`: Parent Side object
         self.side = side
+        #: int: File index
         self.index = index
         self.entry1 = entry1
         self.entry2 = entry2
@@ -74,7 +76,8 @@ class Entry:
 
     @property
     def directory_bytes(self) -> bytes:
-        """File directory name as raw bytes."""
+        """bytes: File directory name as raw byte.
+        """
         return bchr(self.entry1[7] & 127)
 
     @directory_bytes.setter
@@ -84,7 +87,7 @@ class Entry:
         self.side.modified = True
         self.entry1[7] = (self.entry1[7] & 128) | value[0]  # type: ignore
 
-    def __get_directory(self, pure_ascii: bool = False) -> str:
+    def _get_directory(self, pure_ascii: bool = False) -> str:
         directory = self.directory_bytes.decode("ascii")
         if pure_ascii:
             return directory
@@ -92,14 +95,14 @@ class Entry:
 
     @property
     def directory(self) -> str:
-        """File directory name.
+        """str: File directory name.
 
-        Directory name is a single character. Default directory name is '$'.
+        Directory name is a single character. Default directory name is ``'$'``.
 
         Raises:
             ValueError: Assigned name is invalid or longer than 1 char.
         """
-        return self.__get_directory()
+        return self._get_directory()
 
     @directory.setter
     def directory(self, value: str) -> None:
@@ -107,7 +110,8 @@ class Entry:
 
     @property
     def filename_bytes(self) -> bytes:
-        """File name as raw bytes."""
+        """bytes: File name as raw bytes.
+        """
         return bytes(x & 127 for x in self.entry1[0:7]).rstrip(b' ')
 
     @filename_bytes.setter
@@ -118,7 +122,7 @@ class Entry:
         self.side.modified = True
         self.entry1[0:7] = value  # type: ignore
 
-    def __get_filename(self, pure_ascii: bool = False) -> str:
+    def _get_filename(self, pure_ascii: bool = False) -> str:
         value = self.filename_bytes.decode("ascii")
         if pure_ascii:
             return value
@@ -126,14 +130,14 @@ class Entry:
 
     @property
     def filename(self) -> str:
-        """File name string not including directory name.
+        """str: File name not including directory name.
 
         File name is up to 7 characters long.
 
         Raises:
             ValueError: Assigned name is invalid or longer than 7 chars.
         """
-        return self.__get_filename()
+        return self._get_filename()
 
     @filename.setter
     def filename(self, value: str) -> None:
@@ -141,10 +145,10 @@ class Entry:
 
     @property
     def fullname_bytes(self) -> bytes:
-        """Raw full file name including directory name as bytes."""
+        """bytes: Raw full file name including directory name as bytes."""
         return b'%s.%s' % (self.directory_bytes, self.filename_bytes)
 
-    def __get_fullname(self, pure_ascii: bool = False) -> str:
+    def _get_fullname(self, pure_ascii: bool = False) -> str:
         value = self.fullname_bytes.decode("ascii")
         if pure_ascii:
             return value
@@ -152,12 +156,12 @@ class Entry:
 
     @property
     def fullname(self) -> str:
-        """Full file name including directory name.
+        """str: Full file name including directory name.
 
         Raises:
             ValueError: Assigned name is invalid or too long.
         """
-        return self.__get_fullname(False)
+        return self._get_fullname(False)
 
     @fullname.setter
     def fullname(self, value: str) -> None:
@@ -169,7 +173,7 @@ class Entry:
 
     @property
     def fullname_ascii(self) -> str:
-        """Full file name without pound character translation.
+        """str: Full file name without Pound character translation.
 
         Full file name including directory name, without translation
         of BBC's ASCII code &60 to Unicode pound sign.
@@ -177,16 +181,20 @@ class Entry:
         Raises:
             ValueError: Assigned name is invalid or too long.
         """
-        return self.__get_fullname(True)
+        return self._get_fullname(True)
 
     @property
     def displayname_bytes(self) -> bytes:
-        """Name as displayed by CAT as raw bytes."""
+        """bytes: Name as displayed by ``*CAT`` as raw bytes.
+
+        The filename is preceded by a directory name if the file is not in the
+        current directory.
+        """
         if self.directory == self.side.image.current_dir:
             return self.filename_bytes
         return b'%s.%s' % (self.directory_bytes, self.filename_bytes)
 
-    def __get_displayname(self, pure_ascii: bool = False) -> str:
+    def _get_displayname(self, pure_ascii: bool = False) -> str:
         value = self.displayname_bytes.decode("ascii")
         if pure_ascii:
             return value
@@ -194,15 +202,18 @@ class Entry:
 
     @property
     def displayname(self) -> str:
-        """Name as displayed by CAT.
+        """str: Name as displayed by ``*CAT``.
 
-        Short name if file is in current directory, otherwise fullname.'
+        The filename is preceded by a directory name if the file is not in the
+        current directory.
         """
-        return self.__get_displayname(False)
+        return self._get_displayname(False)
 
     @property
     def rawname(self) -> bytes:
         """Get raw file name from catalog entry.
+
+        :meta private:
 
         This property is used for calculating disk digest.
         """
@@ -210,7 +221,11 @@ class Entry:
 
     @property
     def sorting_string(self) -> bytes:
-        """Full file name translated for sorting. Not usable otherwise."""
+        """Full file name translated for sorting. Not usable otherwise.
+
+        :meta private:
+
+        """
         if self.__name_cache is None or self.__name_seq != self.side.image.mod_seq:
             dirname = bchr(self.entry1[7] & 127).translate(Entry.SORTING_TRANSLATION)
             filename = bytes(x & 127 for x in self.entry1[0:7]).translate(Entry.SORTING_TRANSLATION)
@@ -220,7 +235,7 @@ class Entry:
 
     @property
     def locked(self) -> bool:
-        """File locked attribute.
+        """bool: File locked attribute.
 
         Files with locked attribute are protected from modification
         or deletion by Disk Filing System. This module doesn't respect that.
@@ -235,12 +250,12 @@ class Entry:
 
     @property
     def access(self) -> str:
-        """File access mode - "L" if file is locked, empty otherwise"""
+        """str: File access mode - "L" if file is locked, empty otherwise"""
         return "L" if self.locked else ""
 
     @property
     def load_address(self) -> int:
-        """File load address."""
+        """int: File load address."""
         high = self._get_high_bits(1)
         if high == 3:
             high = 255
@@ -255,7 +270,7 @@ class Entry:
 
     @property
     def exec_address(self) -> int:
-        """File execution address."""
+        """int: File execution address."""
         high = self._get_high_bits(3)
         if high == 3:
             high = 255
@@ -270,7 +285,7 @@ class Entry:
 
     @property
     def size(self) -> int:
-        """File length in bytes."""
+        """int: File length in bytes."""
         high = self._get_high_bits(2)
         return Entry._get_word(self.entry2[4:6]) | (high << 16)
 
@@ -283,7 +298,7 @@ class Entry:
 
     @property
     def start_sector(self) -> int:
-        """Logical number of the first sector containing file data."""
+        """int: Logical number of the first sector containing file data."""
         high = self._get_high_bits(0)
         return self.entry2[7] | (high << 8)
 
@@ -296,29 +311,29 @@ class Entry:
 
     @property
     def sectors_count(self) -> int:
-        """Number of sectors occupied by file data based on file length."""
+        """int: Number of sectors occupied by the file data."""
         return (self.size + SECTOR_SIZE - 1) // SECTOR_SIZE
 
     @property
     def end_sector(self) -> int:
-        """Logical number of the first sector after sectors containing file data."""
+        """int: Logical number of the first sector after sectors containing file data."""
         return self.start_sector + self.sectors_count
 
     @property
     def head(self) -> int:
-        """Head - 0 or 1."""
+        """int: Entry head - 0 or 1."""
         return self.side.head
 
     @property
     def drive(self) -> int:
-        """Entry drive - 0 or 2"""
+        """int: Entry drive - 0 or 2"""
         return self.side.head * 2
 
     def get_sectors(self) -> Sectors:
         """Get 'Sectors' object for sectors occupied by this file.
 
         Raises:
-            IndexError: The 'self' object points to a catalog entry beyond last
+            IndexError: The ``self`` object points to a catalog entry beyond last
                 used entry or disk catalog is invalid.
         """
         if self.index >= self.side.number_of_files:
@@ -329,7 +344,7 @@ class Entry:
         """Read all file data and return 'bytes' object.
 
         Raises:
-            IndexError: The 'self' object points to a catalog entry beyond last
+            IndexError: The ``self`` object points to a catalog entry beyond last
                 used entry or disk catalog is invalid.
         """
         return self.get_sectors().readall()
@@ -337,13 +352,15 @@ class Entry:
     def writeall(self, data: Union[bytes, Sequence[int], 'Sectors']) -> None:
         """Write all file data.
 
-        Args:
-            data: A 'bytes' object or other iterable object.
         Note:
             This function doesn't update catalog entry in any way. File size
-            and sectors allocation should be managed by the caller.
+            and sectors allocation must be managed by the caller.
+
+        Args:
+            data (Union[bytes, Sequence[int], :class:`Sectors`]): A `bytes`
+                object or other iterable object.
         Raises:
-            IndexError: The 'self' object points to a catalog entry beyond last
+            IndexError: The ``self`` object points to a catalog entry beyond last
                 used entry or disk catalog is invalid.
             ValueError: Data is larger that file size.
         """
@@ -354,13 +371,13 @@ class Entry:
         """Hexdecimal dump of file data.
 
         Args:
-            start: Optional; Starting offset.
-            size: Optional; Number of bytes to dump.
-            width: Optional; Number of bytes per line.
-            ellipsis: Optional; If ellipsis is True, repeating lines will be skipped.
-            file: Output stream. Default is sys.stdout.
+            start: Starting offset.
+            size: Number of bytes to dump.
+            width: Number of bytes per line.
+            ellipsis: Skip repeating lines.
+            file: Output stream. Default is `sys.stdout`.
         Raises:
-            IndexError: The 'self' object points to a catalog entry beyond last
+            IndexError: The `self` object points to a catalog entry beyond last
                 used entry or disk catalog is invalid.
         """
         self.get_sectors().hexdump(start, size, width, ellipsis, file=file)
@@ -369,12 +386,13 @@ class Entry:
         """Generate hexadecimal digest of file data.
 
         Args:
-            mode: Optional; Digest mode. Default is DigestMode.FILE.
-            algorithm: Optional; Algorithm to use instead of the default SHA1.
+            mode (Optional[DigestMode]): Selects digest mode.
+                Default is :data:`DigestMode.FILE`.
+            algorithm: Algorithm to use instead of the default 'SHA1'.
         Returns:
             Hexadecimal digest string.
         Raises:
-            IndexError: The 'self' object points to a catalog entry beyond last
+            IndexError: The `self` object points to a catalog entry beyond last
                 used entry or disk catalog is invalid.
         """
         if algorithm is None:
@@ -394,7 +412,8 @@ class Entry:
 
     @property
     def sha1(self) -> str:
-        """SHA1 digest of file data including load and execution addresses.
+        """
+        str: SHA1 digest of file data including load and execution addresses.
 
         If the 'self' object points to a catalog entry beyond last
             used entry, empty string is returned.
@@ -405,7 +424,8 @@ class Entry:
 
     @property
     def sha1data(self) -> str:
-        """SHA1 digest of file data not including load and execution addresses.
+        """
+        str: SHA1 digest of file data not including load and execution addresses.
 
         If the 'self' object points to a catalog entry beyond last
             used entry, empty string is returned.
@@ -416,7 +436,9 @@ class Entry:
 
     @property
     def sha1all(self) -> str:
-        """SHA1 digest of file data including load and execution addresses and access mode.
+        """
+        str: SHA1 digest of file data including load and execution addresses
+        and access mode.
 
         If the 'self' object points to a catalog entry beyond last
             used entry, empty string is returned.
@@ -435,8 +457,10 @@ class Entry:
         """Validate catalog entry.
 
         Validate file name and start and end sectors. Issue a warning and return
-        False if entry is not valid. Only first encountered problem is reported.
+        ``False`` if entry is not valid.
 
+        Args:
+            warnall (bool): Report all problems, not just the first encountered.
         Returns:
             A boolean indicating if entry is valid.
         """
@@ -498,6 +522,9 @@ class Entry:
         bits = (value & 3) << (2 * index)
         self.entry2[6] = (self.entry2[6] & ~mask) | bits  # type: ignore
 
+    #: File properties available as keywords for listing format strings.
+    #:
+    #: :meta hide-value:
     PROPERTY_NAMES = {
         "index": "File entry index.",
         "fullname": "Full file name including directory name.",
@@ -539,6 +566,8 @@ class Entry:
             for_format: Include additional redundant properties
                 suitable for custom listing format, but not needed
                 for dump.
+            level: If level is 0, image file name and side number is included
+                in properties dictionary.
         Returns:
             Dictionary of file properties.
         """
@@ -609,8 +638,8 @@ class Entry:
         """Generate catalog listing entry line according to selected format.
 
         Args:
-            fmt: Optional; Selected format. Value can be one of ListFormat enum
-                or custom formatting string.
+            fmt (Optional[:class:`ListFormatUnion`]): Listing format. Value can
+                be one of :class:`ListFormat` enum or a custom formatting string.
         """
         if fmt is None:
             fmt = ListFormat.INFO
@@ -650,16 +679,16 @@ class Entry:
 
     @property
     def info(self) -> str:
-        """Info listing line."""
+        """str: Info listing line."""
         return self.listing_entry(ListFormat.INFO)
 
     @property
     def inf(self) -> str:
-        """Line for inf."""
+        """str: Line for inf."""
         return str(self.get_inf())
 
     def get_inf(self) -> 'Inf':
-        """Create Inf object for this file."""
+        """Create :class:`Inf` object for this file."""
         inf = Inf()
         inf.filename = self.fullname_ascii.lstrip()
         inf.load_addr = self.load_address
@@ -697,7 +726,7 @@ class Entry:
                 return False
 
         # If directory is not empty, is must match this file
-        directory = self.__get_directory(True)
+        directory = self._get_directory(True)
         if pattern.dirname is not None:
             if pattern.dirname.match(directory) is None:
                 return False
@@ -707,7 +736,7 @@ class Entry:
             if self.directory != unicode_to_bbc(self.side.image.current_dir):
                 return False
 
-        if pattern.filename.match(self.__get_filename(True)) is None:
+        if pattern.filename.match(self._get_filename(True)) is None:
             return False
 
         pattern.match_count += 1
@@ -726,12 +755,22 @@ class Entry:
               default_head: int = None) -> bool:
         """Test whether the entry filename matches the 'pattern' string.
 
-        Uses standard 'fnmatch' function. If the pattern doesn't contain
-        directory name portion, root directory (i.e. '$.') is prepended
+        Matching in based on standard 'fnmatch' function.
+        If the pattern doesn't contain directory name portion,
+        root directory (i.e. ``$.``) is prepended
         to the pattern.
 
+        If the pattern contains drive name (``:0.`` or ``:2.`` prefix),
+        it is compared with entry's drive number.
+
+        If the pattern doesn't contain drive name and `default_head` parameter
+        is not `None`, it is compared with entry's disk side index.
+
+        Args:
+            pattern (Optional[:class:`PatternUnion`]): Pattern or list of patterns.
+            default_head: Default disk side index.
         Returns:
-            True if file name matches pattern.
+            ``True`` if file name matches any of patterns of the list.
         """
         if pattern is None:
             return default_head is None or default_head == self.head
@@ -739,10 +778,12 @@ class Entry:
         return self._match_parsed(self.side.image._compile_pattern(pattern))
 
     def delete(self, ignore_access=False):
-        """Delete file.
+        """Delete the file.
+
+        :meta private:
 
         Args:
-            ignore_access: Optional; Allow deleting locked files. Default is False.
+            ignore_access: Optional; Allow deleting locked files. Default is `False`.
         """
         # pylint: disable=protected-access
         self.side._check_valid()

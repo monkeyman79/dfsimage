@@ -166,7 +166,7 @@ class Image:
         #: No errors in image validation.
         self.isvalid: bool = False  # Until validated
         self.mod_seq = 0
-        #: Open file handle.
+        #: Image file IO object.
         self.file: Optional[IO[bytes]] = None
         self._current_dir = '$'
         self._load_image(warn_mode, open_mode)
@@ -1138,7 +1138,7 @@ class Image:
 
         Args:
             warn_mode (Optional[WarnMode]): Warning mode.
-                Default is :data:`WarnMode.First`.
+                Default is :data:`WarnMode.FIRST`.
         Returns:
             Validation results - ``True`` if disk is valid, ``False`` otherwise.
         Raises:
@@ -1333,17 +1333,17 @@ class Image:
 
     MMB_STATUS_MAP = {0: 'P', 15: '', 240: 'U'}
 
-    def get_properties(self, for_format: bool, recurse: bool,
+    def get_properties(self, for_format: bool = False, recurse: bool = False,
                        level: int = 0,
                        pattern: PatternUnion = None,
                        sort=False, silent=False) -> Union[List, Dict[str, object]]:
         """Generate a dictionary of all disk image properties.
 
         Args:
-            for_format: If `True`, include additional redundant properties
+            for_format: Include additional redundant properties
                 suitable for custom listing format, but not needed
                 for dump.
-            recurse: If `True`, include list of sides and recursively list
+            recurse: Include a list of sides and recursively a list
                 of files with their properties in the property dictionary.
             level: If level is -1 skip disk image properties and
                 instead return list of sides with their properties. If level
@@ -1353,7 +1353,7 @@ class Image:
             sort (bool): Sort files by name.
             silent (bool): Don't raise exception if a pattern doesn't match any file.
         Returns:
-            Dictionary of disk image properties.
+            Dictionary of disk image properties or list of side or file properties.
         Raise:
             ValueError: Drive name in the pattern is invalid.
             ValueError: The :class:`Image` object has been closed.
@@ -1487,11 +1487,11 @@ class Image:
                 grouping upper and lower case of the same letter together.
                 It is enabled by default for :data:`ListFormat.CAT` format
                 and disabled for all other formats.
-            silent (bool): Don't raise exception if a pattern doesn't
+            silent: Don't raise exception if a pattern doesn't
                 match any file
             file: Output stream. Default is sys.stdout.
         Raises:
-            ValueError: Parameter ``fmt`` or ``header_fmt`` is invalid.
+            ValueError: Format parameter is invalid.
             ValueError: Drive name in the pattern is invalid.
             ValueError: The :class:`Image` object has been closed.
             FileNotFoundError: No file found matching `pattern`.
@@ -1563,7 +1563,7 @@ class Image:
         """Generate hexadecimal digest of the entire disk image file.
 
         Args:
-            algorithm: Algorithm to use instead of the default `SHA1`.
+            algorithm: Algorithm to use instead of the default 'SHA1'.
         Returns:
             Hexadecimal digest string.
         Raises:

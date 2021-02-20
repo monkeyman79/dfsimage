@@ -25,7 +25,7 @@ class ListFormat(Enum):
     DCAT = 7
 
 
-#: Format parameter type - either one of :class:`ListFormat` or custom string.
+#: Format parameter type - either one of :class:`ListFormat` or a custom string.
 ListFormatUnion = Union[ListFormat, str]
 
 

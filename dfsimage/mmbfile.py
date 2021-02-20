@@ -20,7 +20,7 @@ from .mmbentry import MMBEntry
 from .image import Image
 
 
-class _MMBOnbootList:
+class MMBOnbootList:
     """Indexable access to images inserted into drives at boot time."""
 
     def __init__(self, mmb_file: 'MMBFile'):
@@ -36,7 +36,7 @@ class _MMBOnbootList:
         return 4
 
 
-class _MMBAllEntries:
+class MMBAllEntries:
     """Indexable access to all images, including uninitialized ones."""
 
     def __init__(self, mmb_file: 'MMBFile'):
@@ -75,6 +75,7 @@ class MMBFile:
         self._onboot_modified = False
 
         if not create:
+            #: int: Maximum number of images in the **MMB** file
             self.count = is_mmb_file(filename)
         else:
             self.count = MMB_MAX_ENTRIES
@@ -84,11 +85,18 @@ class MMBFile:
 
         self._dataview: Optional[memoryview] = memoryview(bytearray(MMB_INDEX_SIZE))
         self._entry_modified = bytearray(MMB_MAX_ENTRIES)
+        #: str: Full path to the **MMB** file.
         self.path = os.path.abspath(filename)
+        #: str: Name of the **MMB** file.
         self.filename = os.path.basename(filename)
+        #: IO: File IO object.
         self.file: Optional[IO[bytes]] = None
+        #: bool: File is open for read only
         self.is_read_only = not for_write
+        #: bool: File is newly created
         self.is_new_file = create
+        #: int: Reference count. This includes all active :class:`Image` objects
+        #: open from this **MMB**.
         self.refcnt = 1
 
         filemode = "xb" if create else "rb+" if for_write else "rb"
@@ -113,36 +121,36 @@ class MMBFile:
 
     @classmethod
     def open(cls, filename: str, for_write: bool = False) -> 'MMBFile':
-        """Open a MMB file.
+        """Open an **MMB** file.
 
-        The MMBFile object created by this function keeps an open file handle to
-        the MMB file, so make sure to call the 'close()' method when your
-        program finishes using the created object, or use the 'with' statement.
+        The :class:`MMBFile` object created by this function keeps an open file handle to
+        the MMB file, so make sure to call the :meth:`close()` method when your
+        program is done with the created object, or use the ``'with'`` statement.
 
         Args:
-            filename: The MMB file name.
-            for_write: Optional; Open image for write.
+            filename: The **MMB** file name.
+            for_write (bool): Open the file for write.
         Raises:
             FileNotFoundError: File not found.
         Returns:
-            New 'MMBFile' object.
+            A new :class:`MMBFile` object.
         """
         return cls(filename, for_write=for_write)
 
     @classmethod
     def create(cls, filename: str):
-        """Create a new MMB file.
+        """Create a new **MMB** file.
 
-        The MMBFile object created by this function keeps an open file handle to
-        the MMB file, so make sure to call the 'close()' method when your
-        program finishes using the created object, or use the 'with' statement.
+        The :class:`MMBFile` object created by this function keeps an open file handle to
+        the **MMB** file, so make sure to call the :meth:`close()` method when your
+        program is done with the created object, or use the ``'with'`` statement.
 
         Args:
-            filename: The MMB file name.
+            filename: The **MMB** file name.
         Raises:
             FileExistsError: File already exists.
         Returns:
-            New 'MMBFile' object.
+            A new :class:`MMBFile` object.
         """
         return cls(filename, for_write=True, create=True)
 
@@ -159,11 +167,12 @@ class MMBFile:
             raise ValueError('%s: MMB file is closed' % self.filename)
 
     def close(self, save: bool = True):
-        """Decrement reference count, close and invalidate object when no longer referenced.
+        """Decrement reference count, close and invalidate object when no longer
+        referenced.
 
         Args:
-            save: Optional; Write data back to image file if image is not open
-                for read only, and data has been modified.
+            save: Write the catalog data back to the **MMB** file if it is
+                not open for read only, and data has been modified.
         """
         if self.refcnt == 0:
             raise RuntimeError("already closed")
@@ -178,7 +187,7 @@ class MMBFile:
             self._close(True)
 
     def save(self):
-        """Save the MMB file index."""
+        """Save the **MMB** file catalog."""
         self.file.seek(0, SEEK_SET)
         if self.file.write(self._dataview) != MMB_INDEX_SIZE:
             raise IOError("%s: failed to write index" % self.filename)
@@ -186,25 +195,25 @@ class MMBFile:
 
     @property
     def modified(self):
-        """MMB file index has been modified."""
+        """The **MMB** file catalog has been modified since last save."""
         return self._onboot_modified or any(b != 0 for b in self._entry_modified)
 
     def is_entry_modified(self, index: int) -> bool:
-        """Get entry modified flag.
+        """Get catalog entry modified flag.
 
         Args:
-            index: image index
+            index: Image index
         Returns:
-            modified flag value
+            Modified flag value
         """
         return self._entry_modified[index] != 0
 
     def set_entry_modified(self, index: int, value: bool):
-        """Set entry modified flag.
+        """Set catalog entry modified flag.
 
         Args:
-            index: image index
-            value: new modified flag value
+            index: Image index
+            value: New modified flag value
         """
         if value:
             if self.is_read_only:
@@ -213,12 +222,12 @@ class MMBFile:
         self._entry_modified[index] = value
 
     def clear_modified(self):
-        """Clear modified flags after index has been saved."""
+        """Clear all modified flags after catalog has been saved."""
         self._entry_modified.clear()
         self._onboot_modified = False
 
     def incref(self) -> IO[bytes]:
-        """Increment reference count and return file handle."""
+        """Increment reference count and return IO object."""
         self.refcnt += 1
         if self.file is None:
             raise RuntimeError("MMB file is not open")
@@ -228,7 +237,7 @@ class MMBFile:
         """Get index of image inserted into drive at boot time.
 
         Args:
-            drive: emulated drive number
+            drive: Emulated drive number
         """
         self._not_closed()
         if drive < 0 or drive > 3:
@@ -240,8 +249,8 @@ class MMBFile:
         """Set index of image inserted into drive at boot time.
 
         Args:
-            drive: emulated drive number
-            image: disk image index
+            drive: Emulated drive number
+            image: Disk image index
         """
         self._not_closed()
         if drive < 0 or drive > 3:
@@ -257,12 +266,12 @@ class MMBFile:
         self._onboot_modified = True
 
     def get_entry(self, index: int) -> MMBEntry:
-        """Get n-th entry.
+        """Get n-th image entry.
 
         Args:
-            index: image index
+            index: Image index.
         Return:
-            An 'MMBEntry' object refering to the entry
+            An :class:`MMBEntry` object referencing the image.
         """
         self._not_closed()
         offset = (index + 1) * MMB_INDEX_ENTRY_SIZE
@@ -272,13 +281,13 @@ class MMBFile:
                         owner=self)
 
     @property
-    def all_entries(self) -> _MMBAllEntries:
-        """Sequence of initialized entries."""
-        return _MMBAllEntries(self)
+    def all_entries(self) -> MMBAllEntries:
+        """:class:`MMBAllEntries`: Sequence of all disk image entries."""
+        return MMBAllEntries(self)
 
     @property
     def entries(self) -> Generator[MMBEntry, None, None]:
-        """Sequence of initialized entries."""
+        """Generator[:class:`MMBEntry`, None, None]: Sequence of initialized disk image entries."""
         index = 0
         while index < self.count:
             entry = self.get_entry(index)
@@ -287,21 +296,24 @@ class MMBFile:
             index += 1
 
     @property
-    def onboot(self) -> _MMBOnbootList:
-        """List of images inserted into drives at boot time."""
-        return _MMBOnbootList(self)
+    def onboot(self) -> MMBOnbootList:
+        """MMBOnbootList: List of images inserted into drives at boot time."""
+        return MMBOnbootList(self)
 
     def open_entry(self, entry: Union[int, MMBEntry], open_mode: OpenMode = None,
                    warn_mode: WarnMode = None,
                    catalog_only=False) -> 'Image':
-        """Open disk image.
+        """Open contained disk image.
 
         Args:
-            entry: 'MMBEntry' object or image index
-            warn_mode: Optional; Warning mode for validation.
-            catalog_only: Optional; Open only for reading catalog.
+            entry (Union[int, :class:`MMBEntry`]): An :class:`MMBEntry` object
+                or image index.
+            open_mode (:class:`OpenMode`): File open mode.
+            warn_mode: Warning mode for validation.
+                Default is :data:`WarnMode.FIRST`.
+            catalog_only (bool): Open image only for reading catalog.
         Returns:
-            An 'Image' object
+            An :class:`Image` object
         """
         if not isinstance(entry, MMBEntry):
             entry = self.get_entry(entry)
@@ -310,12 +322,13 @@ class MMBFile:
                           catalog_only=catalog_only)
 
     def drecat(self, warn_mode: WarnMode = None) -> int:
-        """Rebuild index of titles.
+        """Rebuild catalog of disk titles.
 
         Args:
-            warn_mode: Optional; Warning mode for validation.
+            warn_mode: Warning mode for validation.
+                Default is :data:`WarnMode.FIRST`.
         Returns:
-            Number of titles than has been changed
+            Number of titles that have changed.
         """
         count = 0
         for entry in self.entries:
@@ -325,14 +338,18 @@ class MMBFile:
                     count += 1
         return count
 
+    #: **MMB** file properties returned by :meth:`get_properties` method.
+    #:
+    #: :meta hide-value:
     PROPERTY_NAMES = {
         "path": "Full path of the MMB file.",
         "filename": "File name of the MMB file.",
         "image_count": "Number of images in the MMB file."
     }
 
+    @property
     def image_count(self) -> int:
-        """Count number of initialized images in MMB file."""
+        """int: Number of initialized images in the **MMB** file."""
         return sum(True for entry in self.entries)
 
     def get_properties(self, for_format: bool, recurse: bool,  # pylint: disable=unused-argument
@@ -341,26 +358,29 @@ class MMBFile:
                        sort=False, silent=False,  # pylint: disable=unused-argument
                        start_index: int = None,
                        end_index: int = None) -> Union[List, Dict[str, object]]:
-        """Get dictionary of all disk image properties.
+        """Get dictionary of all **MMB** file properties.
 
         Args:
-            for_format: Ignored
-            recurse: If True, include list of images and recursively list
-                of files with their properties in returned map.
-            level: Optional; If level is -1 skip MMB file properties and
+            for_format: Ignored.
+            recurse: Include a list of images and recursively a list
+                of files with their properties in the property dictionary.
+            level: If level is -1 skip **MMB** file properties and
                 instead return list of images with their properties. If level
-                is -2, return list of files.
-            pattern: Optional; Pattern for files included in recursive list
-            sort: Optional; Sort files by name
-            silent: Optional; Don't raise exception if a pattern doesn't match any file
+                is -2, return list of files with their properties.
+            pattern (Optional[:class:`PatternUnion`]): Pattern for files included in the
+                recursive list.
+            sort (bool): Sort files by name.
+            silent (bool): Don't raise exception if a pattern doesn't match any file.
+            start_index: Start of the disk images range to include in the list.
+            end_index: End of the disk images range to include in the list.
         Returns:
-            Dictionary of disk image properties.
+            Dictionary of **MMB** file properties or list of image or file properties.
         """
         if level >= 0:
             attrs = {
                 'path': self.path,
                 'filename': self.filename,
-                'image_count': self.image_count()
+                'image_count': self.image_count
                 }
 
         if recurse or level < 0:
@@ -399,15 +419,21 @@ class MMBFile:
                 start_index: int = None, end_index: int = None,
                 silent=False,
                 **kwargs) -> None:
-        """List all or range of images in MMC file.
+        """List all or range of images in the **MMC** file.
 
-        See Image.listing
+        See :meth:`Image.listing`
 
         Args:
-            fmt: Optional; Listing format. Value can be one of
-                ListFormat enum or custom formatting string.
-            start_index: Optional; Starting image index for partial listing
-            end_index: Optional; Ending image index for partial listing
+            fmt (Optional[:class:`ListFormatUnion`]): Listing format. Value can
+                be one of :class:`ListFormat` enum or a custom formatting string.
+            pattern (Optional[:class:`PatternUnion`]): List only files matching
+                pattern (see :meth:`Entry.match`).
+            start_index: Starting image index for partial listing
+            end_index: Ending image index for partial listing
+            silent: Don't raise exception if a pattern doesn't
+                match any file
+            kwargs: Remaining arguments are passed to the :meth:`Image.listing`
+                method.
         """
         count = 0
         line = ""

@@ -33,33 +33,47 @@ class Sectors:
     def __init__(self, image: SectorsOwnerProtocol,
                  chunks: Iterable[memoryview], size: int,
                  used_size: int = None) -> None:
-        """Construct 'Sectors' object.
+        """Construct :class:`Sectors` object.
 
         Args:
-            chunks: Iterable of memoryviews.
+            image (:class:`Image`): Sectors owner
+            chunks (Iterable[memoryview]): Sequence of memoryview objects.
             size: Total number of bytes in all chunks. This is always
                 multiple of sector size.
-            used_size: Optional; Size of used data e.g. if sectors
+            used_size: Size of used data e.g. if sectors
                 belong to a file.
+        Raise:
+            ValueError: Parameter `used_size` is greater that `size`.
         """
         if used_size is not None and used_size > size:
             raise ValueError("'used_size' parameter is too large")
+        #: :class:`Image`: Sectora owner object
         self.image = image
+        #: Tuple[memoryview, ...]: Tuple of memoryview objects.
         self.chunks: Tuple[memoryview, ...] = tuple(chunks)
+        #: int: Total number of bytes in all chunks.
         self.size = size
+        #: int: Size of used data.
         self.used_size = used_size if used_size is not None else size
 
     @property
     def chain(self) -> Iterator[int]:
-        """Create 'itertools.chain' object, joining all fragments into one iterable object.
+        """Create `itertools.chain` object, joining all fragments into one iterable object.
 
         Returns:
-            An 'itertools.chain' object constructed from all 'memoryview' fragments.
+            An `itertools.chain` object constructed from all `memoryview` fragments.
         """
         return itertools.chain.from_iterable(self.chunks)
 
     def extend(self, other: 'Sectors') -> None:
-        """Extend sectors chain."""
+        """Extend sectors chain by appending sectors from `other`.
+
+        Args:
+            other (:class:`Sectors`): Object to append to self.
+        Raise:
+            ValueError: Owners of the two `Sectors` object are not the same.
+            ValueError: This sectors chain is partially used.
+        """
         if self.image is not other.image:
             raise ValueError("cannot merge sectors from different images")
         if self.used_size != self.size:
@@ -69,7 +83,11 @@ class Sectors:
         self.used_size += other.used_size
 
     def fill(self, value: int) -> None:
-        """Fill all sectors with a byte."""
+        """Fill all sectors with a byte value.
+
+        Args:
+            value: Byte value.
+        """
         self.image.modified = True
         for chunk in self.chunks:
             chunk[:] = bchr(value) * len(chunk)  # type: ignore
@@ -93,8 +111,9 @@ class Sectors:
         bytes are filled with zeros.
 
         Args:
-            data: Bytes or iterable of integers to copy from.
-            size: Optional; Maximum number of bytes to write.
+            data (Union[bytes, Sequence[int], :class:`Sectors`]): Bytes or
+                iterable of integers to copy from.
+            size: Maximum number of bytes to write.
         Raises:
             ValueError: Provided data in combination with size
                 doesn't fit in sectors.
@@ -169,10 +188,10 @@ class Sectors:
 
         Args:
             data: Buffer to dump.
-            start: Optional; Starting offset.
-            size: Optional; Number of bytes to dump.
-            width: Optional; Number of bytes per line.
-            ellipsis: Optional; If ellipsis is True, repeating lines will be skipped.
+            start: Starting offset.
+            size: Number of bytes to dump.
+            width: Number of bytes per line.
+            ellipsis: Skip repeating lines.
             file: Output stream. Default is sys.stdout.
         """
         if file is None:
@@ -209,7 +228,12 @@ class Sectors:
                 ellipsis: bool = None, file: IO = None) -> None:
         """Hexdecimal dump of sectors data.
 
-        See hexdump_buffer.
+        Args:
+            start: Starting offset.
+            size: Number of bytes to dump.
+            width: Number of bytes per line.
+            ellipsis: Skip repeating lines.
+            file: Output stream. Default is sys.stdout.
         """
         Sectors.hexdump_buffer(self.readall(), start, size, width, ellipsis, file=file)
 
@@ -217,7 +241,7 @@ class Sectors:
         """Generate hexadecimal digest of sectors' data.
 
         Args:
-            algorithm: Optional; Algorithm to use instead of the default SHA1.
+            algorithm: Algorithm to use instead of the default ``SHA1``.
         Returns:
             Hexadecimal digest string.
         """
@@ -228,7 +252,11 @@ class Sectors:
 
     @staticmethod
     def decode_hexdump(data: str) -> bytes:
-        """Decode binary data from hexdump."""
+        """Decode binary data from hexdump.
+
+        Args:
+            data: Data to decode.
+        """
         offset = 0
         hasaddr = None
         ellipsis = False

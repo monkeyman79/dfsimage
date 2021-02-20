@@ -68,19 +68,27 @@ def canonpath(path: str) -> str:
 
 
 class Inf:
-    """Inf file contents."""
+    """Represents Inf file contents."""
     def __init__(self):
+        #: bool: Inf file data is valid
         self.is_valid = False
+        #: str: Full path to inf file
         self.inf_path = cast(str, None)
+        #: str: DFS file name
         self.filename = cast(str, None)
+        #: int: Load address
         self.load_addr = cast(int, None)
+        #: int: Execution address
         self.exec_addr: Optional[int] = None
+        #: int: File size
         self.size: Optional[int] = None
+        #: bool: File locked flag
         self.locked: Optional[bool] = None
+        #: :meta private:
         self.drive = None  # Internal information, not in file
 
     def to_string(self):
-        """Data to string"""
+        """Generate inf file line from inf data."""
 
         if not self.is_valid:
             return "invalid"
@@ -172,14 +180,15 @@ class Inf:
 
         Args:
             value: Line read from inf file.
-            allow_spaces: Optional; Select algorithm for determining end of file name
+            allow_spaces (bool): Select algorithm for determining end of file name
                 in the inf file string. Each method may fail (or give incorrect results)
                 for some inf files due to ambiguity in the inf file format variants.
                 Default is True.
-            no_throw: Optional; Don't throw exception in case of invalid inf file format,
-                instead return 'Inf" object with 'is_valid' property set to False.
+            no_throw (bool): Don't throw exception in case of invalid inf file format,
+                instead return :class:`Inf` object with :data:`Inf.is_valid` property
+                set to False.
         Raises:
-            ValueError: invalid inf data and 'no_throw' is not True.
+            ValueError: invalid inf data and `no_throw` is not `True`.
         """
 
         value = value.rstrip()
@@ -246,11 +255,11 @@ class Inf:
         """Save inf data to file.
 
         Args:
-            path: Optional; Path to inf file.
+            path: Path to inf file.
         Raises:
-            ValueError: both 'path' and 'self.host_file' are None.
-            ValueError: self.is_valid is False.
-            OSError: writing to inf file failed.
+            ValueError: Both `path` and `self.host_file` are `None`.
+            ValueError: The `self.is_valid` property is `False`.
+            OSError: Writing to inf file failed.
         """
         if not self.is_valid:
             raise ValueError("writing invalid Inf object")
@@ -285,15 +294,16 @@ class Inf:
 
         Args:
             path: Path to inf file.
-            allow_spaces: Optional; Select algorithm for determining end of file name
+            allow_spaces (bool): Select algorithm for determining end of file name
                 in the inf file string. Each method may fail (or give incorrect results)
                 for some inf files due to ambiguity in the inf file format variants.
                 Default is True.
-            no_throw: Optional; Don't throw exception in case of invalid inf file format,
-                instead return 'Inf" object with 'is_valid' property set to False.
+            no_throw (bool): Don't throw exception in case of invalid inf file format,
+                instead return :class:`Inf` object with :data:`Inf.is_valid`
+                property set to `False`.
         Raises:
-            ValueError: invalid inf data and 'no_throw' is not True.
-            OSError: reading inf file failed
+            ValueError: Invalid inf data and `no_throw` is not `True`.
+            OSError: Reading inf file failed
         """
         try:
             data = cls._get_inf_line(path)

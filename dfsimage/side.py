@@ -47,8 +47,11 @@ class Side:
             image (:class:`Image`): Floppy image object.
             head: Floppy disk side index - 0 or 1.
         """
+        #: :class:`Image`: Parent Image object
         self.image = image
+        #: int: Floppy disk side index - 0 or 1
         self.head = head % image.heads
+        #: int: Number of sectors
         self.total_sectors = self.image.sectors_per_head
         self._csector1 = self._logical_sector(CATALOG_SECTOR1)
         self._csector2 = self._logical_sector(CATALOG_SECTOR2)
@@ -493,7 +496,7 @@ class Side:
         Return:
             Found :class:`Entry` or None.
         Raises:
-            ValueError: File name contains invalid characters.
+            ValueError: File name is invalid.
         """
         i = 0
         name = unicode_to_bbc(self._to_fullname(filename))
@@ -556,7 +559,7 @@ class Side:
 
     @property
     def files(self) -> Generator[Entry, None, None]:
-        """Sequence of file entries."""
+        """Generator[:class:`Entry`, None, None]: Sequence of file entries."""
         index = 0
         while index < self.number_of_files:
             yield self.get_entry(index)
@@ -564,11 +567,15 @@ class Side:
 
     def get_files(self, pattern: PatternUnion = None,
                   silent: bool = False) -> List[Entry]:
-        """List of file entries matching pattern.
+        """Get list of file entries matching pattern.
 
         Args:
-            pattern: Optional; Pattern or list of patterns to match
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            pattern (Optional[:class:`PatternUnion`]): Pattern or list of patterns.
+                See :meth:`Entry.match`.
+            silent: Don't raise exception if pattern doesn't match any file.
+        Raises:
+            ValueError: The `pattern` argument is invalid.
+            FileNotFoundError: No file found matching `pattern`.
         """
         if pattern is None:
             return list(self.files)
@@ -596,16 +603,20 @@ class Side:
         """Textual representation."""
         return self.__str__()
 
-    def validate(self, warn_mode: WarnMode = WarnMode.FIRST) -> bool:
+    def validate(self, warn_mode: WarnMode = None) -> bool:
         """Validate catalog.
 
-        Validate catalog data and file entries. Issue a warning and return
-        False if data is not valid. Only first encountered problem is reported
-        unless 'warnall' parameter is True.
+        Validate disk image. If an error is encountered, issue a warning and
+        mark disk side as invalid, preventing disk modifications.
 
+        Args:
+            warn_mode (Optional[WarnMode]): Warning mode.
+                Default is :data:`WarnMode.FIRST`.
         Returns:
             A boolean indicating if catalog is valid.
         """
+        if warn_mode is None:
+            warn_mode = WarnMode.FIRST
         isvalid = True
         warnall = warn_mode == WarnMode.ALL
 
@@ -665,11 +676,14 @@ class Side:
 
     @property
     def image_displayname(self) -> str:
-        """File name of the floppy disk image with MMB index
-           or double sided disk head number appended."""
+        """str: File name of the floppy disk image with **MMB** index
+           or double sided disk head index appended."""
         return ("%s:%d" % (self.image.filename, self.head) if self.image.heads > 1
                 else self.image.displayname)
 
+    #: Disk side properties available as keywords for listing header format strings.
+    #:
+    #: :meta hide-value:
     PROPERTY_NAMES = {
         "side": "Floppy disk side number - 1 or 2.",
         "title": "Floppy title string.",
@@ -714,23 +728,29 @@ class Side:
         "mmb_status_byte": "Raw MMB status byte value in the MMB catalog."
         }
 
-    def get_properties(self, for_format: bool, recurse: bool, level: int,
+    def get_properties(self, for_format: bool = False, recurse: bool = False,
+                       level: int = 0,
                        pattern: PatternUnion = None,
                        sort=False, silent=False) -> Union[List, Dict[str, object]]:
-        """Get dictionary of all floppy side properties.
+        """Generate a dictionary of all floppy side properties.
 
         Args:
-            for_format: Optional; Include additional redundant properties
+            for_format: Include additional redundant properties
                 suitable for custom listing format, but not needed
                 for dump.
-            recurse: Optional; Include files file.
-            level: Optional; If level is 0 indicates, image file name is included
-                in properties dictionary. If level is -1, this function instead
+            recurse: Include list of files with their properties.
+            level: If level is 0, image file name is included
+                in properties dictionary. If level is -1,
+                skip disk side properties and instead
                 return list of files with their properties.
-            sort: Optional; Sort file list. Used when recurse is True or level is -1.
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            pattern (Optional[:class:`PatternUnion`]): Pattern for files included in the
+                recursive list.
+            sort (bool): Sort files by name.
+            silent (bool): Don't raise exception if a pattern doesn't match any file.
         Returns:
-            Dictionary of floppy side properties or list of files properties.
+            Dictionary of floppy disk side properties or list of files properties.
+        Raise:
+            ValueError: Pattern is invalid.
         """
         # pylint: disable=no-member
         if level >= 0:
@@ -805,7 +825,10 @@ class Side:
         return {**attrs, **redund_attrs}
 
     def dcat_line(self):
-        """Generate index entry as displayed by ``*DCAT`` command."""
+        """Generate index entry as displayed by ``*DCAT`` command.
+
+        :meta private:
+        """
         index = self.image.index if self.image.is_mmb else self.head
         if self.image.is_mmb:
             mmb_stat = self.image._mmb_status_byte
@@ -821,14 +844,16 @@ class Side:
         See Side.PROPERTY_NAMES for list of available keys.
 
         Args:
-            fmt: Optional; Selected format. Value can be one of ListFormat enum
-                or custom formatting string. If fmt in any ListFormat enum
-                constant other that ListFormat.CAT, ListFormat.DCAT and
-                ListFormat.TABLE, result is empty.
-                If fmt is a string, the header is generated with str.format function.
+            fmt (Optional[:class:`ListFormatUnion`]): Listing format.
+                Value can be one of :class:`ListFormat` enum
+                or custom formatting string. Nothing is printed
+                if fmt in any ListFormat enum constant other than
+                :data:`ListFormat.CAT`, :data:`ListFormat.DCAT` and
+                :data:`ListFormat.TABLE`.
+                If fmt is a string, the header is generated with `str.format` function.
             file: Output stream. Default is sys.stdout.
         Raises:
-            ValueError: Parameter 'fmt' is invalid.
+            ValueError: Parameter `fmt` is invalid.
         """
         if file is None:
             file = sys.stdout
@@ -882,27 +907,38 @@ class Side:
         Print catalog listing using predefined format or custom
         formatting strings.
 
-        For list of keys available for custom header formatting string see
-        Side.PROPERTY_NAMES.
+        For list of keys available for custom side header formatting string see
+        :data:`Side.PROPERTY_NAMES`.
 
         For list of keys available for custom file entry formatting string see
-        Entry.PROPERTY_NAMES.
+        :data:`Entry.PROPERTY_NAMES`.
 
         Args:
-            fmt: Optional; Selected file entry format. Value can be one of
-                ListFormat enum or custom formatting string.
-            pattern: Optional; Only list files matching pattern (see Entry.match).
-            header_fmt: Optional; Selected listing header format. Value can be one of
-                ListFormat enum or custom formatting string.
-            footer_fmt: Optional; Formatting string for listing footer.
+            fmt (Optional[:class:`ListFormatUnion`]): Listing format. Value can
+                be one of :class:`ListFormat` enum or a custom formatting string.
+            pattern (Optional[:class:`PatternUnion`]): List only files matching
+                pattern (see :meth:`Entry.match`).
+            header_fmt (Optional[:class:`ListFormatUnion`]): Listing header format.
+                Value can be one of :class:`ListFormat` enum or a custom
+                formatting string.
+                Default is no header, unless ``fmt`` is one of
+                :data:`ListFormat.CAT`, :data:`ListFormat.DCAT` or
+                :data:`ListFormat.TABLE`.
+            footer_fmt (Optional[:class:`ListFormatUnion`]): Formatting
+                string for listing footer.
                 Default is no footer.
-            sort: Optional; If this flag is True, displayed files are sorted
-                alphabetically. It is enabled by default for ListFormat.CAT format
+            sort (Optional[bool]): If this flag is ``True``, displayed files are
+                sorted alphabetically, using the same algorithm as DFS uses,
+                grouping upper and lower case of the same letter together.
+                It is enabled by default for :data:`ListFormat.CAT` format
                 and disabled for all other formats.
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
-            file: Optional; Output stream. Default is sys.stdout.
+            silent (bool): Don't raise exception if a pattern doesn't
+                match any file
+            file: Output stream. Default is sys.stdout.
         Raises:
-            ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
+            ValueError: Format parameter is invalid.
+            ValueError: Pattern is invalid.
+            FileNotFoundError: No file found matching `pattern`.
         """
         if file is None:
             file = sys.stdout
@@ -950,16 +986,34 @@ class Side:
             self.listing_header(footer_fmt, file=file)
 
     def cat(self, pattern: PatternUnion = None, silent: bool = False, file: IO = None) -> None:
-        """See :meth:`Image.cat`"""
+        """See :meth:`Image.cat`.
+
+        Args:
+            pattern (Optional[:class:`PatternUnion`]): List only files matching
+                pattern (see :meth:`Entry.match`).
+            silent (bool): Don't raise exception if a pattern doesn't
+                match any file
+            file: Output stream. Default is sys.stdout.
+        """
         self.listing(ListFormat.CAT, pattern, silent=silent, file=file)
 
     def info(self, pattern: PatternUnion = None, silent: bool = False, file: IO = None) -> None:
-        """See :meth:`Image.info`"""
+        """See :meth:`Image.info`.
+
+        Args:
+            pattern (Optional[:class:`PatternUnion`]): List only files matching
+                pattern (see :meth:`Entry.match`).
+            silent (bool): Don't raise exception if a pattern doesn't
+                match any file
+            file: Output stream. Default is sys.stdout.
+        """
         self.listing(ListFormat.INFO, pattern, silent=silent, file=file)
 
     @staticmethod
     def boot_opt_to_str(boot_opt: int) -> str:
         """Convert Boot option flag to string as displayed by DFS.
+
+        :meta private:
 
         Args:
             boot_opt: Boot option numerical value.
@@ -973,6 +1027,8 @@ class Side:
     @staticmethod
     def str_to_boot_opt(opt_str: str) -> int:
         """Convert Boot option string to flag value.
+
+        :meta private:
 
         Args:
             opt_str: Boot option string - one of 'off', 'LOAD', 'RUN', 'EXEC'
@@ -999,10 +1055,10 @@ class Side:
         """Hexdecimal dump of all sectors on this floppy side.
 
         Args:
-            start: Optional; Starting offset.
-            size: Optional; Number of bytes to dump.
-            width: Optional; Number of bytes per line.
-            ellipsis: Optional; If ellipsis is True, repeating lines will be skipped.
+            start: Starting offset.
+            size: Number of bytes to dump.
+            width: Number of bytes per line.
+            ellipsis: Skip repeating lines.
             file: Output stream. Default is sys.stdout.
         """
         self.get_all_sectors().hexdump(start, size, width, ellipsis, file=file)
@@ -1060,7 +1116,7 @@ class Side:
         in catalog.
 
         Args:
-            tracks: Number of tracks - 80 or 40.
+            tracks: Number of tracks - 80 or 40. Default is :data:`Image.tracks`
         """
         if tracks is None:
             tracks = self.image.tracks
@@ -1071,14 +1127,14 @@ class Side:
         self.number_of_sectors = tracks * SECTORS
 
     def readall(self) -> bytes:
-        """Read raw floppy side sectors data and return 'bytes' object."""
+        """Read raw floppy side sectors data and return `bytes` object."""
         return self.get_all_sectors().readall()
 
     def writeall(self, data: Union[bytes, Sequence[int], Sectors]) -> None:
         """Write all side sectors data.
 
         Args:
-            data: A 'bytes' object or other iterable object.
+            data: A `bytes` object or sequence of `int`.
         """
         self.get_all_sectors().writeall(data)
 
@@ -1109,8 +1165,9 @@ class Side:
         """Generate hexadecimal digest of floppy side contents.
 
         Args:
-            mode: Optional; Selects digest mode. Default is DigestMode.ALL.
-            algorithm: Optional; Algorithm to use instead of the default SHA1.
+            mode (Optional[DigestMode]): Selects digest mode.
+                Default is :data:`DigestMode.ALL`.
+            algorithm: Algorithm to use instead of the default 'SHA1'.
         Returns:
             Hexadecimal digest string.
         """
@@ -1129,15 +1186,15 @@ class Side:
 
     @property
     def sha1(self) -> str:
-        """SHA1 digest of the entire floppy disk side surface."""
+        """str: SHA1 digest of the entire floppy disk side surface."""
         return self.get_digest(DigestMode.ALL)
 
     @property
     def sha1files(self) -> str:
-        """SHA1 digest of all files on the floppy disk side."""
+        """str: SHA1 digest of all files on the floppy disk side."""
         return self.get_digest(DigestMode.FILE)
 
     @property
     def sha1used(self) -> str:
-        """SHA1 digest of floppy disk side surface excluding unused areas."""
+        """str: SHA1 digest of floppy disk side surface excluding unused areas."""
         return self.get_digest(DigestMode.USED)
