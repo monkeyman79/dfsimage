@@ -14,11 +14,10 @@
 # import sys
 # sys.path.insert(0, os.path.abspath('.'))
 
-
 # -- Project information -----------------------------------------------------
 
 project = 'dfsimage'
-copyright = '2021, Tadek Kijkowski'
+copyright = '2021 Tadek Kijkowski'
 author = 'Tadek Kijkowski'
 
 # The full version, including alpha/beta/rc tags
@@ -49,15 +48,37 @@ exclude_patterns = []
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+html_theme = 'classic'
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
-autodoc_default_options = {
-    'special-members': '__init__'
-}
+# autodoc_default_options = {
+#     'special-members': '__init__'
+# }
 
 autodoc_typehints = 'description'
+
+autodoc_member_order = 'bysource'
+
+autodoc_type_aliases = {
+    "PatternUnion": "dfsimage.pattern.PatternUnion",
+    "dfsimage.enums.ListFormatUnion": "dfsimage.enums.ListFormatUnion"
+}
+
+napoleon_type_aliases = {
+    "Image": "dfsimage.image.Image",
+    "Side": "dfsimage.side.Size",
+    "Entry": "dfsimage.entry.Entry",
+    "ListFormat": "dfsimage.enums.ListFormat",
+    "DigestMode": "dfsimage.enums.DigestMode",
+    "SizeOption": "dfsimage.enums.SizeOption",
+    "OpenMode": "dfsimage.enums.OpenMode",
+    "WarnMode": "dfsimage.enums.WarnMode",
+    "InfMode": "dfsimage.enums.InfMode",
+    "TranslationMode": "dfsimage.enums.TranslationMode",
+    "PatternUnion": "dfsimage.pattern.PatternUnion",
+    "ListFormatUnion": "dfsimage.enums.ListFormatUnion"
+}

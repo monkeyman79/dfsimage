@@ -3,7 +3,7 @@ import itertools
 import hashlib
 import sys
 
-from typing import Any, Iterator, List
+from typing import Any, Iterator, List, IO
 from typing import Iterable, Sequence, Tuple, Union, Optional
 from typing import Protocol
 from typing import cast
@@ -164,7 +164,7 @@ class Sectors:
     @staticmethod
     def hexdump_buffer(data: bytes, start: int = None, size: int = None,
                        width: int = None, ellipsis: bool = None,
-                       file=sys.stdout) -> None:
+                       file: IO = None) -> None:
         """Hexdecimal dump.
 
         Args:
@@ -175,6 +175,8 @@ class Sectors:
             ellipsis: Optional; If ellipsis is True, repeating lines will be skipped.
             file: Output stream. Default is sys.stdout.
         """
+        if file is None:
+            file = sys.stdout
         m_start = 0 if start is None else start
         if width is None:
             width = 16
@@ -197,14 +199,14 @@ class Sectors:
                 line = '%06X  %-*s  %-*s' % (m_start, 3*width-1,
                                              linedata.hex(' ', 1),  # type: ignore
                                              width, Sectors.__translate_ascii(linedata))
-                print(line, file=sys.stdout)
+                print(line, file=file)
                 skip = 0
                 prevdata = linedata
             m_size -= cnt
             m_start += cnt
 
     def hexdump(self, start: int = None, size: int = None, width: int = None,
-                ellipsis: bool = None, file=sys.stdout) -> None:
+                ellipsis: bool = None, file: IO = None) -> None:
         """Hexdecimal dump of sectors data.
 
         See hexdump_buffer.

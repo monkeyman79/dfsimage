@@ -93,6 +93,7 @@ class InfMode(Enum):
     AUTO = 0
     #: Always write inf files. Require inf files on read.
     ALWAYS = 1
+    #: Never write inf files.
     #: On read treat all files as data files, don't look for extra inf files.
     NEVER = 2
 

@@ -1,4 +1,7 @@
-"""This module contains argparse customizations"""
+"""This module contains argparse customizations.
+
+    :meta private:
+"""
 
 # pylint: skip-file
 # flake8: noqa: C901

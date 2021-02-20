@@ -22,5 +22,5 @@ venv/pyvenv.cfg: dist/dfsimage-$(VERSION).tar.gz
 dist/dfsimage-$(VERSION).tar.gz:
 	python -m build
 
-doc/_build/.stamp: readme.rst doc/*.rst doc/conf.py
+doc/_build/.stamp: readme.rst dfsimage/*.py doc/*.rst doc/conf.py
 	python -m sphinx doc doc/_build && touch $@

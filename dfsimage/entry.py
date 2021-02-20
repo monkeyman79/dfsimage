@@ -1,8 +1,7 @@
 """Access to single file entry structure in disk catalog sectors."""
 
-import sys
 import hashlib
-from typing import Optional, Union, Sequence, Dict
+from typing import Optional, Union, Sequence, Dict, IO
 from typing import cast
 
 from .simplewarn import warn
@@ -351,7 +350,7 @@ class Entry:
         self.get_sectors().writeall(data)
 
     def hexdump(self, start: int = None, size: int = None, width: int = None,
-                ellipsis: bool = None, file=sys.stdout) -> None:
+                ellipsis: bool = None, file: IO = None) -> None:
         """Hexdecimal dump of file data.
 
         Args:
@@ -746,7 +745,7 @@ class Entry:
             ignore_access: Optional; Allow deleting locked files. Default is False.
         """
         # pylint: disable=protected-access
-        self.side.check_valid()
+        self.side._check_valid()
         if self.locked and not ignore_access:
             raise PermissionError("file '%s' is locked" % self.fullname)
         self.get_sectors().clear()

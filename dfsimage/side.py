@@ -3,8 +3,8 @@
 import sys
 import hashlib
 
-from typing import Tuple, Optional, Generator, Sequence, Union, List
-from typing import Dict, Iterable
+from typing import Optional, Generator, Sequence, Union, List
+from typing import Dict, Iterable, IO, NamedTuple
 from typing import cast
 
 from . import simplewarn
@@ -26,6 +26,10 @@ from .entry import Entry
 from .protocol import ImageProtocol, Property
 
 
+FoundFreeBlock = NamedTuple('FoundFreeBlock', [('sector_number', int),
+                                               ('catalog_index', int)])
+
+
 class Side:
     """Represents one side of a floppy image."""
 
@@ -40,8 +44,8 @@ class Side:
         """Construct 'Side' object representing single floppy side in a disk image.
 
         Args:
-            image: Floppy image object.
-            head: Floppy side - 0 or 1.
+            image (:class:`Image`): Floppy image object.
+            head: Floppy disk side index - 0 or 1.
         """
         self.image = image
         self.head = head % image.heads
@@ -52,7 +56,10 @@ class Side:
 
     @property
     def modified(self) -> bool:
-        """Modified flag in parent 'Image' object."""
+        """Modified flag from parent Image object.
+
+        :meta private:
+        """
         return self.image.modified
 
     @modified.setter
@@ -60,62 +67,85 @@ class Side:
         self.image.modified = value
 
     def _sector(self, track: int, sector: int) -> memoryview:
-        """Get 'memoryview' object referencing sector data.
-
-        See Image.sector
-        """
+        """See :meth:`Image._sector`."""
         # pylint: disable=protected-access
         return self.image._sector(self.head, track, sector)
 
     def _logical_sector(self, sector: int) -> memoryview:
-        """Get 'memoryview' object referencing sector data.
-
-        See Image.logical_sector
-        """
+        """See :meth:`Image._logical_sector`."""
         # pylint: disable=protected-access
         return self.image._logical_sector(self.head, sector)
 
     def _track(self, track: int) -> memoryview:
-        """Get 'memoryview' object referencing track data.
-
-        See Image.track
-        """
+        """See :meth:`Image._track`."""
         # pylint: disable=protected-access
         return self.image._track(self.head, track)
 
     def get_sectors(self, start_track: int, start_sector: int, end_track: int, end_sector: int,
                     used_size: int = None) -> Sectors:
-        """Get 'Sectors' object for sectors range.
+        """
+        Get :class:`Sectors` object for sectors range.
 
-        See Image.get_sectors.
+        Return :class:`Sectors` object referencing possibly non-continuous area in
+        image data, corresponding to a sequence of sectors. The area covers sectors
+        in range from the start sector to the end sector exclusively, i.e.
+        `end_track` and `end_sector` should point to first sector after the range.
+        For `end_track` and `end_sector`, value pairs (80, 0) and (79, 10)
+        (or (40, 0) and (39, 10) for 40 track disks) are both valid and point to
+        the same end-of-disk-side sector.
+
+        Args:
+            start_track: Start track number - 0 to 79.
+            start_sector: Start sector number on track - 0 to 9.
+            end_track: End track number - 0 to 80.
+            end_sector: End sector number on track - 0 to 10.
+            used_size: Size in bytes of data contained in sectors sequence
+                especially last sector can be only partially utilized.
+        Raises:
+            IndexError: Invalid head, track or sector number.
+            IndexError: Trying to access sectors other than catalog sectors and
+                Image is open for catalog access only.
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The start sector is after the end sector.
         """
         return self.image.get_sectors(self.head, start_track, start_sector,
                                       end_track, end_sector, used_size)
 
     def get_logical_sectors(self, start_logical_sector: int, end_logical_sector: int,
                             used_size: int = None) -> Sectors:
-        """Get 'Sectors' object for sectors range.
+        """
+        Get :class:`Sectors` object for sectors range by logical sector numbers.
 
-        See Image.get_logical_sectors.
+        Args:
+            start_logical_sector: Start sector logical number on track - 0 to 799.
+            end_logical_sector: End sector number on track - 0 to 800.
+            used_size: Size in bytes of data contained in sectors sequence
+                especially last sector can be only partially utilized.
+        Raises:
+            IndexError: Invalid sector number
+            IndexError: Trying to access sectors other than catalog sectors and
+                Image is open for catalog access only.
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The start sector is after the end sector.
         """
         return self.image.get_logical_sectors(self.head, start_logical_sector, end_logical_sector,
                                               used_size)
 
     def get_all_sectors(self) -> Sectors:
-        """Get 'Sectors' object for entire disk side sectors range.
-
-        See Image.get_logical_sectors.
-        """
+        """Get :class:`Sectors` object for entire disk side sectors range."""
         return self.get_sectors(0, 0, self.image.tracks, 0)
 
     @property
     def drive(self) -> int:
-        """Drive number according to DFS: 0 for side 1, 2 for side 2."""
+        """int: Drive number according to DFS.
+
+        0 for side 1, 2 for side 2
+        """
         return self.head * 2
 
     @property
     def title(self) -> str:
-        """Floppy title string.
+        """str: Floppy title.
 
         Floppy title is up to 12 characters.
 
@@ -138,7 +168,7 @@ class Side:
 
     @property
     def sequence_number(self) -> int:
-        """Sequence number.
+        """int: Sequence number.
 
         Sequence number is a Binary Coded Decimal value incremented by the Disk Filing System
         each time the disk catalog is modified.
@@ -152,7 +182,7 @@ class Side:
 
     @property
     def last_entry_offset(self) -> int:
-        """Last entry offset.
+        """int: Last entry offset.
 
         The offset to the last file entry in both catalog sectors. This number divided by 8
         gives a number of files on the floppy. This number must a multiple of 8 or floppy
@@ -172,7 +202,7 @@ class Side:
 
     @property
     def number_of_files(self) -> int:
-        """Number of files in catalog.
+        """int: Number of files in catalog.
 
         Number of files is calculated based on the last entry offset value.
 
@@ -195,11 +225,10 @@ class Side:
 
     @property
     def opt_byte(self) -> int:
-        """Options byte.
+        """int: Options byte.
 
-        The options byte contains 'Boot option' flag and highest bits of 'Number of sectors' value.
-        Bits 2,3,6 and 7 should all be zero, or floppy image is considered invalid
-        or unsupported.
+        The options byte contains Boot option flag and highest bits of 'Number of sectors' value.
+        If bits 2,3,6 or 7 are not all zero, floppy image is considered invalid or unsupported.
         """
         return self._csector2[6]
 
@@ -210,13 +239,14 @@ class Side:
 
     @property
     def opt(self) -> int:
-        """Boot option flag.
+        """int: Boot option flag.
 
         Action to be taken when the disc is booted. Valid values are:
-            0 - off:  No action.
-            1 - LOAD: Execute `*LOAD $.!BOOT` command.
-            2 - RUN:  Execute `*RUN $.!BOOT` command.
-            3 - EXEC: Execute `*EXEC $.!BOOT` command.
+
+          * 0 - off:  No action.
+          * 1 - LOAD: Execute `*LOAD $.!BOOT` command.
+          * 2 - RUN:  Execute `*RUN $.!BOOT` command.
+          * 3 - EXEC: Execute `*EXEC $.!BOOT` command.
 
         Raises:
             ValueError: Assigned value is not in valid range.
@@ -231,7 +261,7 @@ class Side:
 
     @property
     def opt_str(self) -> str:
-        """Boot option string.
+        """str: Boot option string.
 
         Raises:
             ValueError: Assigned value is not in boot option string.
@@ -244,7 +274,7 @@ class Side:
 
     @property
     def number_of_sectors(self) -> int:
-        """Total number of sectors on disk side.
+        """int: Total number of sectors on disk side.
 
         This value should be either 800 for 80 track disks, or 400 for 40 track disks.
         """
@@ -260,7 +290,7 @@ class Side:
 
     @property
     def used_sectors(self) -> int:
-        """Number of sectors occupied by files and catalog."""
+        """int: Number of sectors occupied by files and catalog."""
         if not self.isvalid:
             return self.number_of_sectors
         result = CATALOG_SECTORS
@@ -270,17 +300,17 @@ class Side:
 
     @property
     def free_sectors(self) -> int:
-        """Number of free sectors."""
+        """int: Number of free sectors."""
         return self.number_of_sectors - self.used_sectors
 
     @property
     def free_bytes(self) -> int:
-        """Number of free bytes."""
+        """int: Number of free bytes on the floppy disk side."""
         return self.free_sectors * SECTOR_SIZE
 
     @property
     def last_used_sector(self) -> int:
-        """Index of first sector after last sector occupied by any file.
+        """int: Index of first sector after last sector occupied by any file.
 
         This method is used for calculating minimum disk image file size.
         If image validation failed, this method returns number of physical
@@ -295,7 +325,7 @@ class Side:
 
     @property
     def largest_free_block(self) -> int:
-        """Size of largest continuous free block."""
+        """int: Size of largest continuous free block."""
         if not self.isvalid:
             return 0
         largest = 0
@@ -306,7 +336,7 @@ class Side:
         largest = max(largest, end - CATALOG_SECTORS)
         return largest * SECTOR_SIZE
 
-    def find_free_block(self, min_size: int) -> Tuple[Optional[int], Optional[int]]:
+    def _find_free_block(self, min_size: int) -> Optional[FoundFreeBlock]:
         """Find first free block of required size.
 
         Args:
@@ -324,15 +354,15 @@ class Side:
             if gap < 0:
                 raise RuntimeError("bad file order in disk catalog")
             if gap >= sectors:
-                return start, file.index + 1
+                return FoundFreeBlock(start, file.index + 1)
             start = file.end_sector
             index -= 1
         gap = self.number_of_sectors - start
         if gap < 0:
             raise RuntimeError("bad file order in disk catalog")
         if gap >= sectors:
-            return start, 0
-        return None, None
+            return FoundFreeBlock(start, 0)
+        return None
 
     def _remove_entry(self, index: int) -> None:
         end = self.last_entry_offset + 8
@@ -405,14 +435,15 @@ class Side:
 
         if size > self.largest_free_block and not no_compact:
             self.compact()
-        start_sector, index = self.find_free_block(size)
-        if index is None or start_sector is None:
+        found = self._find_free_block(size)
+        if found is None:
             raise RuntimeError("no continuous free block for file")
         if load_addr is None:
             load_addr = 0
         if exec_addr is None:
             exec_addr = load_addr
-        entry = self._insert_entry(index, fullname, start_sector, size)
+        entry = self._insert_entry(found.catalog_index, fullname,
+                                   found.sector_number, size)
         entry.writeall(data)
         entry.load_address = load_addr
         entry.exec_address = exec_addr
@@ -425,7 +456,13 @@ class Side:
             raise IOError("disk image is corrupted, can't be modified")
 
     def can_add_file(self, size: int, no_compact: bool) -> bool:
-        """Check if side can accommodate new file of given size."""
+        """Check if side can accommodate new file of given size.
+
+        Args:
+            size: File size.
+            no_compact: If `True` check if there is a continuous free block
+                big enough for the new file without compacting the disk.
+        """
         if not self.isvalid or self.number_of_files == MAX_FILES:
             return False
         if self.largest_free_block >= size:
@@ -452,9 +489,11 @@ class Side:
         """Find entry by filename.
 
         Args:
-            filename: File name, not a pattern
+            filename: File name.
         Return:
-            Found entry or None.
+            Found :class:`Entry` or None.
+        Raises:
+            ValueError: File name contains invalid characters.
         """
         i = 0
         name = unicode_to_bbc(self._to_fullname(filename))
@@ -471,7 +510,7 @@ class Side:
         """Compact fragmented free space on disk.
 
         Raises:
-            IOError: Disk catalog is corrupted
+            IOError: Disk validation failed.
         """
         self._check_valid()
         start_sector = 2
@@ -488,98 +527,17 @@ class Side:
         if start_sector != last_used_sector:
             self.get_logical_sectors(start_sector, last_used_sector).clear()
 
-    def backup(self, source, warn_mode: WarnMode = None):
-        """Copy all sectors data from other image.
-
-        See Image.backup
-        """
-        return self.image.backup(source, warn_mode=warn_mode, default_head=self.head)
-
-    def copy_over(self, source, pattern: PatternUnion,
-                  **kwargs) -> int:
-        """Copy files over from other image.
-
-        See Image.copy_over
-        """
-        return self.image.copy_over(source, pattern,
-                                    default_head=self.head, **kwargs)
-
-    def delete(self, filename: str, **kwargs) -> bool:
-        """Delete single file from floppy disk image.
-
-        See Image.delete
-        """
-        return self.image.delete(filename,
-                                 default_head=self.head, **kwargs)
-
-    def rename(self, from_name: str, to_name: str, **kwargs) -> bool:
-        """Rename single file in floppy image.
-
-        See Image.rename
-        """
-        return self.image.rename(from_name, to_name,
-                                 default_head=self.head, **kwargs)
-
-    def copy(self, from_name: str, to_name: str, **kwargs) -> bool:
-        """Copy single file in floppy image.
-
-        See Image.copy
-        """
-        return self.image.copy(from_name, to_name,
-                               default_head=self.head, **kwargs)
-
-    def destroy(self, pattern: PatternUnion, **kwargs) -> int:
-        """Delete all files matching pattern.
-
-        See Image.destroy
-        """
-        return self.image.destroy(pattern,
-                                  default_head=self.head, **kwargs)
-
-    def lock(self, pattern: PatternUnion, **kwargs):
-        """Lock all files matching pattern."""
-        return self.image.lock(pattern, default_head=self.head, **kwargs)
-
-    def unlock(self, pattern: PatternUnion, **kwarg):
-        """Unlock all files matching pattern."""
-        return self.image.unlock(pattern, default_head=self.head, **kwarg)
-
-    def add_file(self, filename: str, data: bytes,
-                 **kwargs) -> Entry:
-        """Add new file to floppy disk image.
-
-        See Image.add_file
-        """
-        return self.image.add_file(filename, data,
-                                   default_head=self.head, **kwargs)
-
-    def import_files(self, os_files: Union[str, List[str]],
-                     **kwargs) -> int:
-        """Import files from host to floppy image.
-
-        See Image.import_files
-        """
-        return self.image.import_files(os_files,
-                                       default_head=self.head, **kwargs)
-
-    def export_files(self, output: str,
-                     **kwargs) -> int:
-        """Export files from floppy image to host.
-
-        See Image.export_files
-        """
-        return self.image.export_files(output,
-                                       default_head=self.head, **kwargs)
-
     def get_entry(self, index: Union[int, str]) -> 'Entry':
         """Get file entry by index or name.
 
         Args:
             index: File entry index in range 0 - 30, or file name
-        Raises:
-            ValueError: Index is out of valid range.
         Returns:
-            New 'Entry' object.
+            An :class:`Entry` object.
+        Raises:
+            IndexError: Index is out of valid range.
+            KeyError: File name not found.
+            TypeError: Index is neither `str` nor `int`.
         """
         if isinstance(index, int):
             if index < 0 or index > 30:
@@ -847,7 +805,7 @@ class Side:
         return {**attrs, **redund_attrs}
 
     def dcat_line(self):
-        """Generate index entry as displayed by *DCAT command."""
+        """Generate index entry as displayed by ``*DCAT`` command."""
         index = self.image.index if self.image.is_mmb else self.head
         if self.image.is_mmb:
             mmb_stat = self.image._mmb_status_byte
@@ -857,7 +815,7 @@ class Side:
         return "%5d %12s %1s" % (index, self.title, status)
 
     def listing_header(self, fmt: ListFormatUnion = None,
-                       file=sys.stdout) -> None:
+                       file: IO = None) -> None:
         """Print catalog listing header lines according to selected format.
 
         See Side.PROPERTY_NAMES for list of available keys.
@@ -872,6 +830,8 @@ class Side:
         Raises:
             ValueError: Parameter 'fmt' is invalid.
         """
+        if file is None:
+            file = sys.stdout
         if fmt is None:
             fmt = ListFormat.CAT
         if fmt == ListFormat.TABLE:
@@ -884,7 +844,7 @@ class Side:
             attrs = self.get_properties(for_format=True, recurse=False, level=0)
             print(fmt.format_map(cast(Dict[str, object], attrs)), file=file)
         elif fmt == ListFormat.DCAT:
-            print(self.dcat_line())
+            print(self.dcat_line(), file=file)
         elif fmt == ListFormat.CAT:
             print(f'{self.title} ({self.sequence_number:02})', file=file)
             print("%-20s%s" % (f'Drive {drive}', f'Option {self.opt} ({optstr})'), file=file)
@@ -916,7 +876,7 @@ class Side:
     def listing(self, fmt: ListFormatUnion = None,
                 pattern: PatternUnion = None,
                 header_fmt: ListFormatUnion = None, footer_fmt: ListFormatUnion = None,
-                sort: bool = None, silent: bool = False, file=sys.stdout) -> None:
+                sort: bool = None, silent: bool = False, file: IO = None) -> None:
         """Print catalog listing.
 
         Print catalog listing using predefined format or custom
@@ -944,6 +904,9 @@ class Side:
         Raises:
             ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
         """
+        if file is None:
+            file = sys.stdout
+
         fmt = ListFormat.CAT if fmt is None else fmt
 
         header_fmt = fmt if header_fmt is None and not isinstance(fmt, str) else header_fmt
@@ -986,24 +949,12 @@ class Side:
         if footer_fmt is not None and footer_fmt != '':
             self.listing_header(footer_fmt, file=file)
 
-    def cat(self, pattern: PatternUnion = None, silent: bool = False, file=sys.stdout) -> None:
-        """Generate file listing as produced by *CAT command.
-
-        Args:
-            pattern: Optional; Only list files matching pattern (see Entry.match).
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
-            file: Output stream. Default is sys.stdout.
-        """
+    def cat(self, pattern: PatternUnion = None, silent: bool = False, file: IO = None) -> None:
+        """See :meth:`Image.cat`"""
         self.listing(ListFormat.CAT, pattern, silent=silent, file=file)
 
-    def info(self, pattern: PatternUnion = None, silent: bool = False, file=sys.stdout) -> None:
-        """Generate file listing as produced by *INFO command.
-
-        Args:
-            pattern: Optional; Only list files matching pattern (see Entry.match).
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
-            file: Output stream. Default is sys.stdout.
-        """
+    def info(self, pattern: PatternUnion = None, silent: bool = False, file: IO = None) -> None:
+        """See :meth:`Image.info`"""
         self.listing(ListFormat.INFO, pattern, silent=silent, file=file)
 
     @staticmethod
@@ -1044,7 +995,7 @@ class Side:
         raise ValueError("invalid boot option")
 
     def hexdump(self, start: int = None, size: int = None, width: int = None,
-                ellipsis: bool = None, file=sys.stdout) -> None:
+                ellipsis: bool = None, file: IO = None) -> None:
         """Hexdecimal dump of all sectors on this floppy side.
 
         Args:

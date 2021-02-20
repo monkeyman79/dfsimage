@@ -5,7 +5,7 @@ import json
 import xml.etree.ElementTree as ET
 import hashlib
 
-from typing import Sequence, Optional, Union, TypeVar, List
+from typing import Sequence, Optional, Union, TypeVar, List, Callable
 
 from .consts import MMB_INDEX_SIZE, MMB_SIZE, MMB_DISK_SIZE
 from .consts import MMB_MAX_ENTRIES
@@ -44,6 +44,22 @@ def rjoin(sep: Optional[str], array: Sequence[str]) -> Union[str, List[str]]:
             return ''
         return sep.join(array) + sep
     return list(array)
+
+
+# https://stackoverflow.com/questions/13741998/is-there-a-way-to-let-classes-inherit-the-documentation-of-their-superclass-with
+def copydoc(fromfunc: Callable, sep: str = '\n') -> Callable:
+    """Decorator: Copy the docstring of `fromfunc`.
+
+    :meta private:
+    """
+    def _decorator(func: Callable):
+        sourcedoc = fromfunc.__doc__
+        if func.__doc__ is None:
+            func.__doc__ = sourcedoc
+        elif sourcedoc is not None:
+            func.__doc__ = sep.join([sourcedoc, func.__doc__])
+        return func
+    return _decorator
 
 
 FuncType = TypeVar('FuncType')

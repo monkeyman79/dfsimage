@@ -24,7 +24,7 @@ from .consts import MMB_STATUS_UNLOCKED
 from .enums import SizeOption, ListFormat, OpenMode, WarnMode
 from .enums import InfMode, TranslationMode
 from .enums import ListFormatUnion
-from .misc import bchr, LazyString, json_dumps, xml_dumps
+from .misc import bchr, copydoc, LazyString, json_dumps, xml_dumps
 from .misc import DFSWarning, ValidationWarning
 from .misc import is_mmb_file
 from .conv import unicode_to_bbc, NAME_SAFE_TRANS, NAME_STD_TRANS
@@ -74,7 +74,7 @@ class Image:
         "{is_valid:1}|{sha1}"
         )
 
-    def __init__(self, filename: str, for_write=False,
+    def __init__(self, filename: str, for_write: bool = False,
                  open_mode: OpenMode = None, heads: int = None, tracks: int = None,
                  linear: bool = None, warn_mode: WarnMode = None,
                  index: Union[int, MMBEntry] = None,
@@ -82,49 +82,61 @@ class Image:
         """Open disk image file and construct a new :class:`Image` object.
 
         Args:
-            filename: Image filename
-            for_write: Optional; Open image for write.
-            open_mode: Optional; File open mode.
-            heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
+            filename (str): Disk image filename
+            for_write: Open image for write.
+            open_mode (Optional[OpenMode]): File open mode.
+                Default is :data:`OpenMode.ALWAYS`
+            heads: Number of sides - 1 or 2. Default is based on file name and size.
             tracks: Number of tracks per side - 80 or 40. Default is 80.
-            linear: Optional; This flags is always True for single sided disks.
+            linear: This flags is ignored for single sided disks.
                 For double sided disks, it indicates, that data for each side is grouped
-                together as opposed to more popular image format where track data for
-                two sides are interleaved. Default is True for double sided SSD images
-                and False for other double sided disks.
-            warn_mode: Optional; Warning mode for validation: WarnMode.FIRST - display
-                warning for first non-fatal validation error and stop validation, WarnMode.ALL -
-                display all validation errors, WarnMode.NONE - don't display validation errors.
-            index: Optional; Image index, required for MMB file, or drive number for double
-                sided disk.
-            catalog_only: Optional; Open only for reading catalog.
+                together, as opposed to the more prevalent ``.dsd`` image format where
+                track data for the two sides are interleaved. Default is `True` for double
+                sided images with ``.ssd`` extension and `False` for all other double
+                sided disk images.
+            warn_mode (Optional[WarnMode]): Warning mode for validation.
+                Default is :data:`WarnMode.First`.
+            index (Optional[Union[int, MMBEntry]): Image index, required for MMB files.
+                For double sided disks, this can be used to select the default disk side.
+            catalog_only (bool): Open image only for reading catalog data.
+                Only catalog sectors are read from disk and attempt to access any data
+                outside catalog will raise exception.
         Raises:
-            RuntimeError: If image file is invalid or the class doesn't like it
+            RuntimeError: Image file is invalid or the class doesn't like it
                 for some reason.
-            ValueError: If 'heads' or 'tracks' argument has invalid value.
-            ValueError: If 'open_mode' is invalid or 'open_mode' is OpenMode.NEW
-                and 'for_write' is False.
-            FileNotFoundError: File not found and open_mode is OpenMode.EXISTING or
-                for_write is False.
-            FileExistsError: File already exists and open_mode is OpenMode.NEW.
+            ValueError: The ``heads`` or ``tracks`` argument has invalid value.
+            ValueError: The ``open_mode`` argument is invalid or ``open_mode``
+                is :data:`OpenMode.NEW` and ``for_write`` is False.
+            FileNotFoundError: File doesn't exist and open_mode is :data:`OpenMode.EXISTING` or
+                ``for_write`` is False.
+            FileExistsError: File already exists and open_mode is :data:`OpenMode.NEW`.
         """
         self._modified = False
 
         filename, index = self._parse_index(filename, index)
-        self.filename = os.path.basename(filename)
-        self.path = os.path.abspath(filename)
+        #: Image file name
+        self.filename: str = os.path.basename(filename)
+        #: Full path to the image file
+        self.path: str = os.path.abspath(filename)
+        #: Image file basename without extension
+        self.basename: str
         self.basename, _ = os.path.splitext(self.filename)
-        self.is_read_only = not for_write
-        self.is_new_image = False
-        self.catalog_only = catalog_only
-        self.mmb_file: Optional[MMBFileProtocol] = None
+        #: Image file is open for read only
+        self.is_read_only: bool = not for_write
+        #: Image file is newly created
+        self.is_new_image: bool = False
+        #: Image is open for reading catalog
+        self.catalog_only: bool = catalog_only
 
         open_mode = self._validate_open_mode(open_mode)
 
-        self.heads = 0
-        self.tracks = 0
-        self.linear = 0
-        self.original_size = 0
+        #: Number of disk sides
+        self.heads: int = 0
+        #: Number of tracks per side
+        self.tracks: int = 0
+        #: Linear double-sided image. Always ``True`` for single-sides images.
+        self.linear: int = 0
+        self._original_size = 0
         self._second_catalog_offset = 0
         self._offset = 0
         self._mmb_file: Optional[MMBFileProtocol] = None
@@ -151,8 +163,10 @@ class Image:
                             if not self.catalog_only or head == self._default_head
                             else cast(Side, None))
                            for head in range(0, self.heads))
-        self.isvalid = False  # Until validated
+        #: No errors in image validation.
+        self.isvalid: bool = False  # Until validated
         self.mod_seq = 0
+        #: Open file handle.
         self.file: Optional[IO[bytes]] = None
         self._current_dir = '$'
         self._load_image(warn_mode, open_mode)
@@ -212,7 +226,7 @@ class Image:
                                  and not os.path.exists(self.path))
 
             if not self.is_new_image:
-                self.original_size = os.path.getsize(self.path)
+                self._original_size = os.path.getsize(self.path)
 
             mmb_count = is_mmb_file(self.path)
 
@@ -257,18 +271,18 @@ class Image:
             self.tracks = DOUBLE_TRACKS
 
             self.linear = True
-            self.original_size = MMB_DISK_SIZE
+            self._original_size = MMB_DISK_SIZE
 
         else:
             # Default to single side unless file extension is 'dsd' or image is
             # bigger that max. single sided image
             self.heads = (heads if heads is not None
                           else 2 if self.filename.lower().endswith(".dsd")
-                          or self.original_size > TRACK_SIZE * DOUBLE_TRACKS
+                          or self._original_size > TRACK_SIZE * DOUBLE_TRACKS
                           else 1)
             # Default to 80 tracks
             self.tracks = (tracks if tracks is not None
-                           else DOUBLE_TRACKS if self.original_size > TRACK_SIZE
+                           else DOUBLE_TRACKS if self._original_size > TRACK_SIZE
                            * SINGLE_TRACKS * self.heads
                            else self._peek_number_of_tracks())
             # Always linear if single sided
@@ -280,7 +294,7 @@ class Image:
         if self.is_new_image:
             return DOUBLE_TRACKS
 
-        if self.original_size < CATALOG_SECTORS * SECTOR_SIZE:
+        if self._original_size < CATALOG_SECTORS * SECTOR_SIZE:
             raise RuntimeError("%s: disk image too small" % self.filename)
 
         catalog_data = bytearray(CATALOG_SECTORS * SECTOR_SIZE)
@@ -305,15 +319,15 @@ class Image:
 
         if not self.is_new_image:
             # Sanity check - image file size should be multiple of sector size
-            if self.original_size % SECTOR_SIZE != 0:
+            if self._original_size % SECTOR_SIZE != 0:
                 raise RuntimeError("%s: invalid disk image size" % self.filename)
 
             # Make sure that at least first side catalog sectors are present
-            if self.original_size < CATALOG_SECTORS * SECTOR_SIZE:
+            if self._original_size < CATALOG_SECTORS * SECTOR_SIZE:
                 raise RuntimeError("%s: disk image too small" % self.filename)
 
             # Sanity check
-            if self.original_size > self.max_size:
+            if self._original_size > self.max_size:
                 raise RuntimeError("%s: disk image too big for %s"
                                    % (self.filename, self._sides_and_tracks_str()))
 
@@ -321,7 +335,7 @@ class Image:
             if self.heads == 2:
                 self._second_catalog_offset = (self.tracks * TRACK_SIZE if self.linear
                                                else TRACK_SIZE)
-                if (self.original_size
+                if (self._original_size
                         < self._second_catalog_offset + CATALOG_SECTORS * SECTOR_SIZE):
                     raise RuntimeError("%s: disk image too small for %s"
                                        % (self.filename, self._sides_and_tracks_str()))
@@ -369,7 +383,7 @@ class Image:
 
                 b_count = self.file.readinto(self._dataview)  # type: ignore[attr-defined]
 
-                if b_count != self.original_size and b_count < len(self._dataview):
+                if b_count != self._original_size and b_count < len(self._dataview):
                     raise RuntimeError("%s: unexpected image short read" % self.filename)
 
                 # Validate the image
@@ -377,7 +391,7 @@ class Image:
 
                 # Sanity check. Validate the image first to know how to
                 # calculate min_size
-                if self.original_size < self.min_size:
+                if self._original_size < self.min_size:
                     raise RuntimeError("%s: disk image too small" % self.filename)
 
         except:  # noqa: E722
@@ -386,36 +400,41 @@ class Image:
 
     @classmethod
     def create(cls, filename: str, heads: int = None, tracks: int = None,
-               linear: bool = None, warn_mode: WarnMode = None,
-               index: Union[int, MMBEntry] = None) -> 'Image':
+               linear: bool = None, index: Union[int, MMBEntry] = None) -> 'Image':
         """Create new image file.
 
-        Created Image object keeps open file handle to the disk image file, so make sure
-        to call the 'close()' method when your program finishes using the created object,
-        or even better use the 'with' statement.
+        The `Image` object created by this function keeps an open file handle to the
+        disk image, so make sure to call the :meth:`close()` method when your
+        program is done with the created object, or use the ``'with'`` statement.
+
+        This method cannot be used to create an **MMB** file - use :meth:`MMBFile.create`
+        instead
 
         Example:
             ::
+
                 with Image.create("image.ssd") as image:
-                    image.get_side(0).import(glob.glob("srcdir/*"))
+                    image.import_files(glob.glob("srcdir/*"))
 
         Args:
-            fname: Image file name.
-            heads: Optional; Number of sides - 1, 2. Default is based on file name.
-            tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
-            linear: Optional; This flags is always True for single sided disks.
+            filename: Disk image filename.
+            heads: Number of sides - 1 or 2. Default is based on file name.
+            tracks: Number of tracks per side - 80 or 40. Default is 80.
+            linear: This flags is ignored for single sided disks.
                 For double sided disks, it indicates, that data for each side is grouped
-                together as opposed to more popular image format where track data for
-                two sides are interleaved. Default is True for double sided SSD images
-                and False for other double sided disks.
-            index: Optional; Can be used to select default side for created Image
-                object. Valid values are 0 for first side and 1 for second side.
+                together, as opposed to the more prevalent ``.dsd`` image format where
+                track data for the two sides are interleaved. Default is `True` for double
+                sided images with ``.ssd`` extension and `False` for all other double
+                sided disk images.
+            index (Optional[Union[int, MMBEntry]): Can be used to select default
+                side for the created Image object. Valid values are 0 for first
+                side and 1 for second side.
         Raises:
-            ValueError: If 'heads' or 'tracks' argument has invalid value.
+            ValueError: The ``heads`` or ``tracks`` argument has invalid value.
         Returns:
-            New 'Image' object.
+            New :class:`Image` object.
         """
-        return cls(filename, True, OpenMode.NEW, heads, tracks, linear, warn_mode, index)
+        return cls(filename, True, OpenMode.NEW, heads, tracks, linear, None, index)
 
     @classmethod
     def open(cls, filename: str, for_write=False, open_mode: OpenMode = None,
@@ -424,43 +443,47 @@ class Image:
              catalog_only=False) -> 'Image':
         """Open disk image file.
 
-        The Image object create by this function keeps open file handle to the
-        disk image file, so make sure to call the 'close()' method when your
-        program finishes using the created object, or use the 'with' statement.
+        The `Image` object created by this function keeps an open file handle to the
+        disk image file, so make sure to call the :meth:`close()` method when your
+        program is done with the created object, or use the ``'with'`` statement.
 
         Example:
             ::
+
                 with Image.open("image.ssd") as image:
                     image.cat()
 
         Args:
-            filename: Disk image file name.
-            for_write: Optional; Open image for write.
-            open_mode: Optional; File open mode. Default is OpenMode.ALWAYS.
-            heads: Optional; Number of sides - 1 or 2. Default based on file name and size.
-            tracks: Optional; Number of tracks per side - 80 or 40. Default is 80.
-            linear: Optional; This flags is always True for single sided disks.
+            filename: Disk image filename.
+            for_write (bool): Open image for write.
+            open_mode (Optional[OpenMode]): File open mode. Default is :data:`OpenMode.ALWAYS`.
+            heads: Number of sides - 1 or 2. Default based on file name and size.
+            tracks: Number of tracks per side - 80 or 40. Default is 80.
+            linear: This flags is ignored for single sided disks.
                 For double sided disks, it indicates, that data for each side is grouped
-                together as opposed to more popular image format where track data for
-                two sides are interleaved. Default is True for double sided SSD images
-                and False for other double sided disks.
-            warn_mode: Optional; Warning mode for validation: WarnMode.FIRST - display
-                warning for first non-fatal validation error and stop validation, WarnMode.ALL -
-                display all validation errors, WarnMode.NONE - don't display validation errors.
-            index: Optional; Image index, required for MMB file, or drive number for double
-                sided disk.
-            catalog_only: Optional; Open only for reading catalog.
+                together, as opposed to the more prevalent ``.dsd`` image format where
+                track data for the two sides are interleaved. Default is `True` for double
+                sided images with ``.ssd`` extension and `False` for all other double
+                sided disk images.
+            warn_mode (Optional[WarnMode]): Warning mode for validation.
+                Default is :data:`WarnMode.First`.
+            index (Optional[Union[int, MMBEntry]): Image index, required for MMB files.
+                For double sided disks, this can be used to select the default disk side.
+                It can be either and integer value, or object of type :class:`MMBEntry`.
+                The latter form is used by the infrastructure to open disk images from
+                :class:`MMBFile`.
+            catalog_only (bool): Open image only for reading catalog data.
+                Only catalog sectors are read from disk and attempt to access any data
+                outside catalog will raise exception.
         Raises:
-            RuntimeError: If image file is invalid or the class doesn't like it
-                for some reason.
-            ValueError: If 'heads' or 'tracks' argument has invalid value.
-            ValueError: If 'open_mode' is invalid or 'open_mode' is OpenMode.NEW
-                and 'for_write' is False.
-            FileNotFoundError: File not found and open_mode is OpenMode.EXISTING or
-                for_write is False.
-            FileExistsError: File already exists and open_mode is OpenMode.NEW.
+            ValueError: The ``heads`` or ``tracks`` argument has invalid value.
+            ValueError: The ``open_mode`` argument is invalid or ``open_mode``
+                is :data:`OpenMode.NEW` and ``for_write`` is `False`.
+            FileNotFoundError: File doesn't exist and open_mode is :data:`OpenMode.EXISTING` or
+                ``for_write`` is False.
+            FileExistsError: File already exists and ``open_mode`` is :data:`OpenMode.NEW`.
         Returns:
-            New 'Image' object.
+            A new :class:`Image` object.
         """
 
         return cls(filename, for_write, open_mode, heads, tracks, linear,
@@ -470,7 +493,9 @@ class Image:
         """Write image data back to file.
 
         Args:
-            size_option: Optional; File size option.
+            size_option (Optional[SizeOption]): File size option.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
         """
         self._not_closed()
 
@@ -487,7 +512,7 @@ class Image:
                 self.file.truncate(size)
 
             self.modified = False
-            self.original_size = size
+            self._original_size = size
 
         entry = self._mmb_entry
         if entry is not None and entry.modified:
@@ -505,11 +530,11 @@ class Image:
         entry = self._mmb_entry
         return entry is not None and entry.modified
 
-    def close(self, save: bool = True):
+    def close(self, save: bool = True) -> None:
         """Close and invalidate object.
 
         Args:
-            save: Optional; Write data back to image file if image is not open
+            save: Write data back to image file if image is not open
                 for read only, and data has been modified.
         """
         if self.file is not None:
@@ -545,26 +570,26 @@ class Image:
 
     @property
     def is_mmb(self) -> bool:
-        """Return True if image is contained in MMB file."""
+        """bool: Return ``True`` if image is contained in an *MMB* file."""
         return self._mmb_entry is not None
 
     @property
     def index(self) -> int:
-        """Index of image in an MMB file or 0."""
+        """int: Index of image in an *MMB* file or ``0`` if not an *MMB* file."""
         if self._mmb_entry is None:
             return 0
         return self._mmb_entry.index
 
     @property
     def displayname(self) -> str:
-        """Image file name with index appended for MMB or DSD file."""
+        """str: Image file name with an index appended for an *MMB* file."""
         if self.is_mmb:
             return "%s:%d" % (self.filename, self.index)
         return self.filename
 
     @property
     def locked(self) -> bool:
-        """Image locked flag in the MMB index."""
+        """bool: Image locked flag in the *MMB* index."""
         if self._mmb_entry is None:
             return False
         return self._mmb_entry.locked
@@ -579,7 +604,7 @@ class Image:
 
     @property
     def initialized(self) -> bool:
-        """Disk initialized flag in the MMB index."""
+        """bool: Disk initialized flag in the *MMB* index."""
         if self._mmb_entry is None:
             return True
         return self._mmb_entry.initialized
@@ -601,13 +626,14 @@ class Image:
 
     @property
     def current_dir(self) -> str:
-        """Current directory name.
+        """str: Current directory name.
 
         Used for listing and as a default for file names without directory.
-        This is property of the Image object, not present in the floppy image.
+        This is property of the :class:`Image` object, not present in the floppy image.
+        Default value is ``'$'``.
 
         Raises:
-            ValueError: Assigned value length is other than 1 or invalid character.
+            ValueError: Assigned value length is other than 1 or is an invalid character.
         """
         return self._current_dir
 
@@ -622,19 +648,19 @@ class Image:
 
     @property
     def default_side(self) -> Optional[int]:
-        """Default disk side.
+        """Optional[int]: Default disk side.
 
-        Value is 1 - based (i.e. 1 is first side, 2 is second side).
+        Value is 1-based (i.e. 1 is first side, 2 is second side).
 
-        Default disk side for listing or file operations.
-        If default_side is None, listing will be generated for both sides,
-        new files will be created where there is enough space,
-        single file operations will fail if there is ambiguity, and
+        Default disk side for listing and file operations.
+        If `default_side` is ``None``, listing will be generated for both sides,
+        new files will be created wherever there is enough space,
+        single file operations will fail if there is ambiguity in file name, and
         multiple file operations will affect files on both sides.
 
-        Disk side can be overridden for file operation by prefixing
-        file name or pattern with drive number as in DFS: ":0.filename" for
-        first side, ":2.filename" for second side.
+        Disk side can be overridden for file operation by prefixing a
+        file name or a pattern with a drive number as in DFS: ``":0.filename"`` for
+        the first side, ``":2.filename"`` for the second side.
         """
         if self._default_head is None:
             return None
@@ -662,13 +688,16 @@ class Image:
     # pylint: enable=missing-function-docstring, no-self-use
 
     def get_side(self, head: Optional[int] = None) -> Optional[Side]:
-        """Get 'Side' object representing single side of a disk.
+        """Get :class:`Side` object representing a single side of a disk.
 
         Args:
-            head: Floppy side - 0 or 1. If this parameter is None,
-                get default side or None.
+            head: Floppy side - 0 or 1. If this parameter is `None`,
+                this method will return the default disk side or `None`
+                if there is no default disk side.
         Returns:
-            A 'Side' object.
+            A :class:`Side` object.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
         """
         self._not_closed()
         if head is None:
@@ -678,8 +707,14 @@ class Image:
         return self.sides[head]
 
     @property
-    def default_sides(self) -> Tuple:
-        """Get tuple object containing default side or all sides if default side is None."""
+    def default_sides(self) -> Tuple[Side, ...]:
+        """Tuple[Side, ...]: Get tuple object containing default side or all
+           sides if default side is None.
+
+           :meta private:
+           """
+        if self._dataview is None:
+            return tuple()
         head = self._default_head
         if head is None:
             return tuple(self.sides)
@@ -687,7 +722,7 @@ class Image:
 
     @property
     def modified(self) -> bool:
-        """Image data has been changed since it was loaded or saved."""
+        """bool: Image data has been changed since it was loaded or saved."""
         return self._modified
 
     @modified.setter
@@ -712,7 +747,7 @@ class Image:
 
     @property
     def files(self) -> Generator[Entry, None, None]:
-        """Sequence of file entries."""
+        """Generator[Entry, None, None]: Sequence of file entries."""
         sides = self.default_sides
         for side in sides:
             index = 0
@@ -793,6 +828,7 @@ class Image:
         return self._sector_start(head, track, sector) + SECTOR_SIZE
 
     def _get_data(self, start: int, end: int) -> memoryview:
+        self._not_closed()
         if start < self._data_offset or end > self._data_offset + len(self._dataview):
             raise IndexError("access outside loaded data")
         return self._dataview[start:end]
@@ -889,31 +925,15 @@ class Image:
                                        and start_sector > end_sector):
             raise ValueError("start sector after end sector")
 
+    @copydoc(Side.get_sectors)
     def get_sectors(self, head: int, start_track: int, start_sector: int,
                     end_track: int, end_sector: int,
                     used_size: int = None) -> Sectors:
-        """Get 'Sectors' object for sectors range.
-
-        Return 'Sectors' object referencing possibly non-continuous area in
-        image data corresponding to sequence of sectors. The area covers sectors
-        in range from the start sector to the end sector exclusively, i.e.
-        end_track and end_sector should point to first sector after the range.
-        For end_track and end_sector, value pairs (80, 0) and (79, 10)
-        (or (40, 0) and (39, 10) for 40 track disks) are both valid and point to
-        the same end-of-disk-side sector.
-
-        Args:
-            head: Floppy side - 0 or 1.
-            start_track: Start track number - 0 to 79.
-            start_sector: Start sector number on track - 0 to 9.
-            end_track: End track number - 0 to 80.
-            end_sector: End sector number on track - 0 to 10.
-            used_size: Size in bytes of data contained in sectors sequence
-                especially last sector can be only partially utilized.
-        Raises:
-            IndexError: Invalid head, track or sector number
-            ValueError: Start sector is after end sector.
         """
+        Args:
+            head: Floppy disk side index - 0 or 1.
+        """
+
         self._validate_sectors(head, start_track, start_sector,
                                end_track, end_sector)
         chunks = []
@@ -948,19 +968,12 @@ class Image:
 
         return Sectors(self, chunks, count * SECTOR_SIZE, used_size)
 
+    @copydoc(Side.get_logical_sectors)
     def get_logical_sectors(self, head: int, start_logical_sector: int,
                             end_logical_sector: int, used_size: int = None) -> Sectors:
-        """Get 'Sectors' object for sectors range by logical sector numbers.
-
+        """
         Args:
-            head: Floppy side - 0 or 1.
-            start_logical_sector: Start sector logical number on track - 0 to 799.
-            end_logical_sector: End sector number on track - 0 to 800.
-            used_size: Size in bytes of data contained in sectors sequence
-                especially last sector can be only partially utilized.
-        Raises:
-            IndexError: Invalid sector number
-            ValueError: Start sector is after end sector.
+            head: Floppy disk side index - 0 or 1.
         """
         start_track, start_sector = Image._logical_to_physical(start_logical_sector)
         end_track, end_sector = Image._logical_to_physical(end_logical_sector)
@@ -969,11 +982,12 @@ class Image:
 
     @property
     def min_size(self) -> int:
-        """Minimal disk image size.
+        """int: Minimal disk image size.
 
-        Size of disk image when only used sectors are present in the image file.
+        The size of the disk image when only used sectors are present in the image file.
         """
-        self._not_closed()
+        if self._dataview is None:
+            return 0
 
         if self.is_mmb:
             return self.max_size
@@ -987,35 +1001,43 @@ class Image:
 
     @property
     def max_size(self) -> int:
-        """Maximal disk image size.
+        """int: Maximal disk image size.
 
-        Size of disk image when all sectors are present in the image file.
+        The size of the disk image when all sectors are present in the image file.
         """
         return self._sector_end(self.heads - 1, self.tracks - 1, SECTORS - 1)
 
     def _get_size_for_save(self, size_option: SizeOption = None) -> int:
         if self.is_mmb:
-            return self.original_size
+            return self._original_size
         if size_option is None:
             size_option = SizeOption.KEEP
         if (size_option == SizeOption.EXPAND
                 or self.is_new_image and size_option == SizeOption.KEEP):
             return self.max_size
         if (size_option == SizeOption.SHRINK or
-                self.modified and self.original_size < self.min_size):
+                self.modified and self._original_size < self.min_size):
             return self.min_size
-        return self.original_size
+        return self._original_size
 
     def get_entry(self, index: Union[int, str]) -> 'Entry':
-        """Get file entry by index or name.
+        """Get a file entry by index or name.
+
+        Find file on the default side, or both sides if there
+        is no default side.
 
         Args:
-            index: File entry index in range 0 - 30, or file name
-        Raises:
-            ValueError: Index is out of valid range.
+            index: File entry index in range 0 - 61 or a file name
         Returns:
-            New 'Entry' object.
+            An :class:`Entry` object.
+        Raises:
+            IndexError: Index is greater than or equal to number of files.
+            KeyError: File name not found.
+            TypeError: Index is neither `str` nor `int`.
+            ValueError: The :class:`Image` object has been closed.
         """
+        self._not_closed()
+
         if isinstance(index, int):
             sides = self.default_sides
             if index < 0:
@@ -1055,15 +1077,18 @@ class Image:
         return self.__str__()
 
     def hexdump(self, start: int = None, size: int = None, width: int = None,
-                ellipsis: bool = None, file=sys.stdout) -> None:
+                ellipsis: bool = None, file: IO = None) -> None:
         """Hexdecimal dump of disk image.
 
         Args:
-            start: Optional; Starting offset.
-            size: Optional; Number of bytes to dump.
-            width: Optional; Number of bytes per line.
-            ellipsis: Optional; If ellipsis is True, repeating lines will be skipped.
-            file: Output stream. Default is sys.stdout.
+            start: Starting offset.
+            size: Number of bytes to dump.
+            width: Number of bytes per line.
+            ellipsis: Skip repeating lines.
+            file: Output stream. Default is `sys.stdout`.
+        Raises:
+            IndexError: Image is open for catalog access only.
+            ValueError: The :class:`Image` object has been closed.
         """
         Sectors.hexdump_buffer(self._get_data(0, self._get_size_for_save()), start,
                                size, width, ellipsis, file=file)
@@ -1108,12 +1133,16 @@ class Image:
     def validate(self, warn_mode: WarnMode = None) -> bool:
         """Validate disk image.
 
-        Validate disk image. Raise exception if a fatal error is encountered.
-        If a non-fatal error is encountered, issue a warning and mark disk side
-        as invalid, preventing disk modifications.
+        Validate disk image. If an error is encountered, issue a warning and
+        mark disk side as invalid, preventing disk modifications.
 
+        Args:
+            warn_mode (Optional[WarnMode]): Warning mode.
+                Default is :data:`WarnMode.First`.
         Returns:
-            Validation results - True if disk is valid, False otherwise.
+            Validation results - ``True`` if disk is valid, ``False`` otherwise.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
         """
         self._not_closed()
         isvalid = True
@@ -1167,7 +1196,7 @@ class Image:
         Returns:
             Remaining file name, directory name or None and head number or None.
         Raise:
-            ValueError: drive name in pattern is invalid or not present.
+            ValueError: Drive name in the pattern is invalid.
         """
         dirname = None
         head = None
@@ -1215,7 +1244,7 @@ class Image:
         Returns:
             File name pattern, directory name pattern or None and head number or None.
         Raise:
-            ValueError: drive name in pattern is invalid or not present.
+            ValueError: Drive name in the pattern is invalid.
         """
         filename, dirname, head = self._parse_name(name, True)
 
@@ -1274,6 +1303,9 @@ class Image:
         head_list.sort()
         return head_list
 
+    #: Image properties available as keywords for listing header format strings.
+    #:
+    #: :meta hide-value:
     PROPERTY_NAMES = {
         "path": "Full path of the floppy disk image file.",
         "filename": "File name of the floppy disk image file.",
@@ -1305,22 +1337,26 @@ class Image:
                        level: int = 0,
                        pattern: PatternUnion = None,
                        sort=False, silent=False) -> Union[List, Dict[str, object]]:
-        """Get dictionary of all disk image properties.
+        """Generate a dictionary of all disk image properties.
 
         Args:
-            for_format: If True, include additional redundant properties
+            for_format: If `True`, include additional redundant properties
                 suitable for custom listing format, but not needed
                 for dump.
-            recurse: If True, include list of sides and recursively list
-                of files with their properties in returned map.
-            level: Optional; If level is -1 skip disk image properties and
+            recurse: If `True`, include list of sides and recursively list
+                of files with their properties in the property dictionary.
+            level: If level is -1 skip disk image properties and
                 instead return list of sides with their properties. If level
-                is -2, return list of files.
-            pattern: Optional; Pattern for files included in recursive list
-            sort: Optional; Sort files by name
-            silent: Optional; Don't raise exception if a pattern doesn't match any file
+                is -2, return list of files with their properties.
+            pattern (Optional[:class:`PatternUnion`]): Pattern for files included in the
+                recursive list.
+            sort (bool): Sort files by name.
+            silent (bool): Don't raise exception if a pattern doesn't match any file.
         Returns:
             Dictionary of disk image properties.
+        Raise:
+            ValueError: Drive name in the pattern is invalid.
+            ValueError: The :class:`Image` object has been closed.
         """
         self._not_closed()
 
@@ -1376,7 +1412,7 @@ class Image:
         return attrs
 
     def _listing_header(self, fmt: ListFormatUnion = None,
-                        file=sys.stdout) -> None:
+                        file: IO = None) -> None:
         """Print listing header line common for entire floppy image file.
 
         See Image.PROPERTY_NAMES for list of available keys.
@@ -1387,8 +1423,10 @@ class Image:
                 ListFormat enum other than ListFormat.TABLE.
             file: Output stream. Default is sys.stdout.
         Raises:
-            ValueError: Parameter 'fmt' is invalid.
+            ValueError: Parameter ``fmt`` is invalid.
         """
+        if file is None:
+            file = sys.stdout
         self._not_closed()
         if fmt is None or fmt == '':
             return
@@ -1408,43 +1446,58 @@ class Image:
                 side_footer_fmt: ListFormatUnion = None,
                 img_header_fmt: ListFormatUnion = None,
                 img_footer_fmt: ListFormatUnion = None,
-                sort: bool = None, silent=False, file=sys.stdout) -> None:
+                sort: bool = None, silent=False, file: IO = None) -> None:
         """Print file listing for all (single or both) disk sides.
 
         Print catalog listing using predefined format or custom
         formatting strings.
 
         For list of keys available for custom image header formatting string see
-        Image.PROPERTY_NAMES.
+        :data:`Image.PROPERTY_NAMES`.
 
         For list of keys available for custom side header formatting string see
-        Side.PROPERTY_NAMES.
+        :data:`Side.PROPERTY_NAMES`.
 
         For list of keys available for custom file entry formatting string see
-        Entry.PROPERTY_NAMES.
+        :data:`Entry.PROPERTY_NAMES`.
 
         Args:
-            fmt: Optional; Listing format. Value can be one of
-                ListFormat enum or custom formatting string.
-            pattern: Optional; List only files matching pattern (see Entry.match).
-            side_header_fmt: Optional; Selected side listing header format.
-                Value can be one of ListFormat enum or
-                custom formatting string. Default is the same as ``fmt`` if it is one for
-                predefined formats, otherwise no header.
-            side_footer_fmt: Optional; Formatting string for side listing footer.
-                Default is no side listing footer.
-            img_header_fmt: Optional; Formatting string for image listing header.
-                Default ia no image header.
-            img_footer_fmt: Optional; Formatting string for image listing footer.
-                Default is no image footer.
-            sort: Optional; If this flag is True, displayed files are sorted
-                alphabetically. It is enabled by default for ListFormat.CAT format
+            fmt (Optional[:class:`ListFormatUnion`]): Listing format. Value can
+                be one of :class:`ListFormat` enum or a custom formatting string.
+            pattern (Optional[:class:`PatternUnion`]): List only files matching
+                pattern (see :meth:`Entry.match`).
+            side_header_fmt (Optional[:class:`ListFormatUnion`]): Disk side
+                listing header format.
+                Value can be one of :class:`ListFormat` enum or a custom
+                formatting string.
+                Default is no header, unless ``fmt`` is one of
+                :data:`ListFormat.CAT`, :data:`ListFormat.DCAT` or
+                :data:`ListFormat.TABLE`.
+            side_footer_fmt (Optional[:class:`ListFormatUnion`]): Formatting
+                string for disk side listing footer.
+                Default is no footer.
+            img_header_fmt (Optional[:class:`ListFormatUnion`]): Formatting
+                string for image listing header.
+                Default ia no header, unless ``fmt`` is :data:`ListFormat.TABLE`.
+            img_footer_fmt (Optional[:class:`ListFormatUnion`]): Formatting
+                string for image listing footer.
+                Default is no footer.
+            sort (Optional[bool]): If this flag is ``True``, displayed files are
+                sorted alphabetically, using the same algorithm as DFS uses,
+                grouping upper and lower case of the same letter together.
+                It is enabled by default for :data:`ListFormat.CAT` format
                 and disabled for all other formats.
-            silent: Optional; Don't raise exception if a pattern doesn't match any file
+            silent (bool): Don't raise exception if a pattern doesn't
+                match any file
             file: Output stream. Default is sys.stdout.
         Raises:
-            ValueError: Parameter 'fmt' or 'header_fmt' is invalid.
+            ValueError: Parameter ``fmt`` or ``header_fmt`` is invalid.
+            ValueError: Drive name in the pattern is invalid.
+            ValueError: The :class:`Image` object has been closed.
+            FileNotFoundError: No file found matching `pattern`.
         """
+        if file is None:
+            file = sys.stdout
         self._not_closed()
         if img_header_fmt is None and not isinstance(fmt, str):
             img_header_fmt = fmt
@@ -1474,31 +1527,48 @@ class Image:
         if img_footer_fmt is not None and img_footer_fmt != '':
             self._listing_header(img_footer_fmt, file=file)
 
-    def cat(self, pattern: PatternUnion = None, *, silent=False, file=sys.stdout) -> None:
-        """Generate file listing as produced by *CAT command.
+    def cat(self, pattern: PatternUnion = None, *, silent=False, file: IO = None) -> None:
+        """Generate file listing as produced by ``*CAT`` command.
 
         Args:
-            pattern: Optional; Only list files matching pattern (see Entry.match).
+            pattern (Optional[:class:`PatternUnion`]): List only files matching
+                pattern (see :meth:`Entry.match`).
+            silent (bool): Don't raise exception if a pattern doesn't
+                match any file
             file: Output stream. Default is sys.stdout.
+        Raises:
+            ValueError: Drive name in the pattern is invalid.
+            ValueError: The :class:`Image` object has been closed.
+            FileNotFoundError: No file found matching `pattern`.
         """
         self.listing(ListFormat.CAT, pattern, silent=silent, file=file)
 
-    def info(self, pattern: PatternUnion = None, *, silent=False, file=sys.stdout) -> None:
-        """Generate file listing as produced by *INFO command.
+    def info(self, pattern: PatternUnion = None, *, silent=False, file: IO = None) -> None:
+        """Generate file listing as produced by ``*INFO`` command.
 
         Args:
-            pattern: Optional; Only list files matching pattern (see Entry.match).
+            pattern (Optional[:class:`PatternUnion`]): List only files matching
+                pattern (see :meth:`Entry.match`).
+            silent (bool): Don't raise exception if a pattern doesn't
+                match any file
             file: Output stream. Default is sys.stdout.
+        Raises:
+            ValueError: Drive name in the pattern is invalid.
+            ValueError: The :class:`Image` object has been closed.
+            FileNotFoundError: No file found matching `pattern`.
         """
         self.listing(ListFormat.INFO, pattern, silent=silent, file=file)
 
     def get_digest(self, algorithm: str = None) -> str:
-        """Generate hexadecimal digest of entire disk image file.
+        """Generate hexadecimal digest of the entire disk image file.
 
         Args:
-            algorithm: Optional; Algorithm to use instead of the default SHA1.
+            algorithm: Algorithm to use instead of the default `SHA1`.
         Returns:
             Hexadecimal digest string.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            IndexError: Image is open for catalog access only.
         """
         self._not_closed()
         if algorithm is None:
@@ -1510,7 +1580,9 @@ class Image:
 
     @property
     def sha1(self) -> str:
-        """SHA1 digest of the entire disk image file."""
+        """str: SHA1 digest of the entire disk image file."""
+        if self._dataview is None or self.catalog_only:
+            return ""
         return self.get_digest()
 
     def _to_fullname(self, filename: str,
@@ -1520,6 +1592,10 @@ class Image:
         Extract drive number and prepend current directory name ($) if not
         present in filename. Filename is not a pattern - characters *?![] are
         not special and are all valid filename characters.
+
+        Raises:
+            ValueError: Drive name in the pattern is invalid.
+            ValueError: File name contains invalid characters.
         """
 
         if head is None:
@@ -1559,9 +1635,13 @@ class Image:
         """Find entry by filename.
 
         Args:
-            filename: File name, not a pattern
+            filename: File name.
+            head: Disk side index.
         Return:
-            Found entry or None.
+            Found :class:`Entry` or None.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: File name contains invalid characters.
         """
         self._not_closed()
         name, head = self._to_fullname(filename, head)
@@ -1578,12 +1658,17 @@ class Image:
 
     def get_files(self, pattern: PatternUnion = None,
                   silent: bool = False, default_head: int = None) -> List[Entry]:
-        """List of file entries matching pattern.
+        """Get list of file entries matching pattern.
 
         Args:
-            pattern: Optional; Pattern or list of patterns to match
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
-            default_head: Optional; Default head number for file matching
+            pattern (Optional[:class:`PatternUnion`]): Pattern or list of patterns.
+                See :meth:`Entry.match`.
+            silent: Don't raise exception if pattern doesn't match any file.
+            default_head: Default disk side index for file matching.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `pattern` argument is invalid.
+            FileNotFoundError: No file found matching `pattern`.
         """
         self._not_closed()
         if default_head is None:
@@ -1606,14 +1691,18 @@ class Image:
         """Delete single file from floppy disk image.
 
         Args:
-            filename: File name, not a pattern.
-            ignore_access: Optional; Allow deleting locked files. Default is
-                False.
-            silent: Optional; Don't raise exception if file doesn't exist.
-                Default is False.
-            default_head: Default disk side.
+            filename: File name.
+            ignore_access (bool): Allow deleting locked files.
+            silent (bool): Don't raise exception if file doesn't exist.
+            default_head: Default disk side index.
         Returns:
-            True if file was deleted, otherwise False.
+            ``True`` if file was deleted, otherwise ``False``.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `filename` argument is invalid.
+            FileNotFoundError: File not found.
+            PermissionError: File is locked.
+            IOError: Disk validation failed.
         """
         entry = self.find_entry(filename, default_head)
         if entry is None:
@@ -1630,21 +1719,28 @@ class Image:
         """Rename single file in floppy image.
 
         Args:
-            from_name: Name of file to rename.
-            to_name: New name for file.
-            replace: Optional; Allow replacing existing files. Default is False.
-            ignore_access: Optional; Allow replacing locked files. Default is
-                False.
-            no_compact: Optional; Fail if there is no continuous block big
+            from_name: Source file name.
+            to_name: New name for the file.
+            replace (bool): Allow replacing existing files.
+            ignore_access (bool): Allow replacing locked files.
+            no_compact (bool): Fail if there is no continuous block big
                 enough for the file when moving file between sides.
-                If 'no_compact' is not set, try to compact free
-                space. Default is False - i.e. try to compact free
+                If `no_compact` is not set, try to compact free
                 space if needed.
-            silent: Optional; Don't raise exception if file doesn't exist.
-                Default is False.
-            default_head: Default disk side.
+            silent (bool): Don't raise exception if the file doesn't exist.
+            default_head: Default disk side index.
         Returns:
-            True if file was renamed, otherwise False.
+            ``True`` if file was renamed, otherwise ``False``.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `from_name` or `to_name` argument is invalid.
+            ValueError: New name is the same as old.
+            FileNotFoundError: File not found.
+            FileExistsError: File `to_name` already exists.
+            PermissionError: File is locked.
+            IOError: Disk validation failed.
+            RuntimeError: Disk full or no continuous free block for file
+                when moving file from one disk side to the other.
         """
         from_entry = self.find_entry(from_name, default_head)
         if from_entry is None:
@@ -1695,24 +1791,30 @@ class Image:
              ignore_access=False, no_compact=False,
              preserve_attr=False, silent=False,
              default_head: int = None) -> bool:
-        """Copy single file in floppy image.
+        """Copy single file in floppy disk image.
 
         Args:
             from_name: Source file name.
             to_name: Destination file name.
-            replace: Optional; Allow replacing existing files. Default is False.
-            ignore_access: Optional; Allow replacing locked files. Default is
-                False.
-            no_compact: Optional; Fail if there is no continuous block big
-                enough for the file. Otherwise try to compact free
-                space. Default is False - i.e. try to compact free
-                space if needed.
-            preserve_attr: Optional; Preserve locked attribute on copied files.
-            silent: Optional; Don't raise exception if file doesn't exist.
-                Default is False.
-            default_head: Default disk side.
+            replace (bool): Allow replacing existing files.
+            ignore_access (bool): Allow replacing locked files.
+            no_compact (bool): Fail if there is no continuous block big
+                enough for the file. If `no_compact` is not set, try to compact
+                free space if needed.
+            preserve_attr (bool): Preserve locked attribute on copied files.
+            silent (bool): Don't raise exception if the file doesn't exist.
+            default_head: Default disk side index.
         Returns:
-            True if file was copied, otherwise False.
+            ``True`` if file was copied, otherwise ``False``.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `from_name` or `to_name` argument is invalid.
+            ValueError: New name is the same as old.
+            FileNotFoundError: File not found.
+            FileExistsError: File `to_name` already exists.
+            PermissionError: File is locked.
+            IOError: Disk validation failed.
+            RuntimeError: Disk full or no continuous free block for file.
         """
         from_entry = self.find_entry(from_name, default_head)
         if from_entry is None:
@@ -1755,14 +1857,22 @@ class Image:
                 silent: bool = False, default_head: int = None) -> int:
         """Delete all files matching pattern.
 
+        If the `ignore_access` parameter is `False`, this function will skip locked
+        files and issue a summary warning at the end of the operation.
+
         Args:
-            pattern: Pattern or list or patterns.
-            ignore_access: Optional; Allow deleting locked files. Default is
-                False.
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
-            default_head: Optional; Default disk side.
+            pattern (Optional[:class:`PatternUnion`]): Pattern or list of file
+                name patterns.
+            ignore_access (bool): Allow deleting locked files.
+            silent (bool): Don't raise exception if pattern doesn't match any file.
+            default_head: Default disk side index.
         Return:
             Number of deleted files.
+        Raises:
+            FileNotFoundError: No file found matching `pattern`.
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `pattern` argument is invalid.
+            IOError: Disk validation failed.
         """
         self._not_closed()
         if default_head is None:
@@ -1796,8 +1906,16 @@ class Image:
         """Lock all files matching pattern.
 
         Args:
-            pattern: Pattern or list or patterns.
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            pattern (Optional[:class:`PatternUnion`]): Pattern or list of file
+                name patterns.
+            silent (bool): Don't raise exception if pattern doesn't match any file.
+        Returns:
+            Number of files that have access attribute changed.
+        Raises:
+            FileNotFoundError: No file found matching pattern`.
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `pattern` argument is invalid.
+            IOError: Disk validation failed.
         """
         count = 0
         for file in self.get_files(pattern, silent, default_head):
@@ -1811,8 +1929,16 @@ class Image:
         """Unlock all files matching pattern.
 
         Args:
-            pattern: Pattern or list or patterns.
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
+            pattern (Optional[:class:`PatternUnion`]): Pattern or list of file
+                name patterns.
+            silent (bool): Don't raise exception if pattern doesn't match any file.
+        Returns:
+            Number of files that have access attribute changed.
+        Raises:
+            FileNotFoundError: No file found matching `pattern`.
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `pattern` argument is invalid.
+            IOError: Disk validation failed.
         """
         self._not_closed()
         count = 0
@@ -1831,23 +1957,24 @@ class Image:
         Args:
             filename: File name.
             data: Data to write to the file.
-            load_addr: Optional; New file load address. Default is 0.
-            exec_addr: Optional; New file execution address. Default is the same
-                as `load_addr`.
-            locked: Optional; New file locked flags. Default is False.
-            replace: Optional; Allow replacing existing files. Default is False.
-            ignore_access: Optional; Allow replacing locked files. Default is
-                False.
-            no_compact: Optional; Fail if there is no continuous block big
-                enough for the file. Otherwise try to compact free
-                space. Default is False - i.e. try to compact free
-                space if needed.
-            default_head: Default disk side.
+            load_addr: Load address. Default is 0.
+            exec_addr: Execution address. Default is the same
+                as ``load_addr``.
+            locked (bool): Locked flag.
+            replace (bool): Allow replacing existing files.
+            ignore_access (bool): Allow replacing locked files.
+            no_compact (bool): Fail if there is no continuous block big
+                enough for the file. If `no_compact` is not set, try to compact
+                free space if needed.
+            default_head: Default disk side index.
+        Returns:
+            An :class:`Entry` object for the newly created DFS file.
         Raises:
-            IOError: Disk catalog is corrupted.
-            FileExistsError: File already exists and 'replace' is false.
-            PermissionError: File already exists, is locked and 'ignore_access'
-                is false.
+            ValueError: The :class:`Image` object has been closed.
+            ValueError: The `filename` argument is invalid.
+            IOError: Disk validation failed.
+            FileExistsError: File already exists.
+            PermissionError: File is locked.
             RuntimeError: Disk full or no continuous free block for file.
         """
         self._not_closed()
@@ -1870,10 +1997,10 @@ class Image:
             head = 0
 
         side = self.get_side(head)
-        return side.add_file(fullname, data, load_addr=load_addr,
-                             exec_addr=exec_addr, locked=locked,
-                             replace=replace, ignore_access=ignore_access,
-                             no_compact=no_compact)
+        return side._add_entry(fullname, data, load_addr=load_addr,
+                               exec_addr=exec_addr, locked=locked,
+                               replace=replace, ignore_access=ignore_access,
+                               no_compact=no_compact)
 
     def import_files(self, os_files: Union[str, List[str]], *,
                      dfs_names: Union[str, List[str]] = None,
@@ -1886,31 +2013,38 @@ class Image:
                      verbose=False,
                      silent=False,
                      default_head: int = None) -> int:
-        """Import files from host to floppy image.
+        """Import files from host filesystem to floppy image.
 
         Args:
             os_files: List of files to import or single file name.
-            dfs_names: Optional; List of DFS file names or single name. If
+            dfs_names: List of DFS file names or single name. If
                 present must have the same number of elements as os_files
                 parameter.
-            inf_mode: Optional; Inf files processing mode.
-                Default is InfMode.AUTO.
-            load_addr: Optional; File load address. Applies to all files,
+            inf_mode (Optiona[InfMode]): Inf files processing mode.
+                Default is :data:`InfMode.AUTO`.
+            load_addr: File load address. Applies to all files,
                 overrides inf files.
-            exec_addr: Optional; File exec address. Applies to all files,
+            exec_addr: File exec address. Applies to all files,
                 overrides inf files.
-            locked: Optional; File locked attribute. Applies to all files,
+            locked: File locked attribute. Applies to all files,
                 overrides inf files.
-            replace: Optional; Allow replacing existing files. Default is False.
-            ignore_access: Optional; Allow replacing locked files. Default is
-                False.
-            no_compact: Optional; Fail if there is no continuous block big
-                enough for the files. Otherwise try to compact free space.
-                Default is False - i.e. try to compact free space if needed.
-            continue_on_error: Optional; Continue on error.
-            varbose: Optional; List files as they are being imported.
-            silent: Optional; Don't raise exception if a file is not found.
-            default_head: Default disk side.
+            replace (bool): Allow replacing existing files.
+            ignore_access (bool): Allow replacing locked files.
+            no_compact (bool): Fail if there is no continuous block big
+                enough for the file. If `no_compact` is not set, try to compact
+                free space if needed.
+            continue_on_error (bool): Continue on error.
+            varbose (bool): List files as they are being imported.
+            silent (bool): Don't raise exception if a file is not found.
+            default_head: Default disk side index.
+        Returns:
+            Number of imported files.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            IOError: Disk validation failed.
+            FileExistsError: File already exists.
+            PermissionError: File is locked.
+            RuntimeError: Disk full or no continuous free block for file.
         """
         import_proc = _ImportFiles(self, os_files, dfs_names, inf_mode,
                                    load_addr, exec_addr, locked, replace,
@@ -1959,36 +2093,42 @@ class Image:
                      replace=False, continue_on_error=True,
                      verbose=False, silent=False,
                      default_head: int = None) -> int:
-        """Export files from floppy image to host.
+        """Export files from floppy image to host filesystem.
 
         Args:
             output: Output directory or file name. This string is
-                processed with str.format function with each exported
-                file properties (see Entry.PROPERTY_NAMES). If 'output'
-                is directory name, it should be terminated with path
-                separator (i.e. '/'). In that case dfs full file name
+                processed with :meth:`str.format` function with each exported
+                file properties (see :data:`Entry.PROPERTY_NAMES`). If `output`
+                is a directory name, it should be terminated with path
+                separator (i.e. '/' or '\\'). In that case dfs full file name
                 with be appended to the output path.
-            files: Optional; List of files or pattern for files to export.
-            create_directories: Optional; If True, output directories
+            files (Optional[:class:`PatternUnion`]): List of files or pattern
+                for files to export.
+            create_directories (bool): If `True`, output directories
                 will be automatically created as needed. Otherwise
-                this function will fail if output directory doesn't exist.
-            translation: Optional; Mode for translating dfs filename to host
-                filename characters.
-                Default is ``TranslationMode.STANDARD``.
-            inf_mode: Optional; Inf files processing mode.
-                Default is InfMode.ALWAYS.
-            include_drive: Optional; Include drive name (i.e. :0. or :2.) in inf
+                this function will fail if an output directory doesn't exist.
+            translation (Union[TranslationMode, bytes]): Mode for translating
+                dfs filename to host filename characters.
+                Default is :data:`TranslationMode.STANDARD`.
+            inf_mode (Optional[InfMode]): Inf files processing mode.
+                Default is :data:`InfMode.ALWAYS`.
+            include_drive (bool): Include drive name (i.e. :0. or :2.) in inf
                 files created from double sided floppy images. The resulting inf
                 files will be incompatible with most software. Use this option
                 with care.
-            replace: Optional; If file with the same name already exists in the output
-                directory, it will be replaced with new file. If this option is
-                False or not specified, this method will fail.
-            continue_on_error: Optional; Continue on error.
-            varbose: Optional; List files as they are being exported
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
-            default_head: Optional; Disk side. Overrides Image.default_side property.
-                If not present, files from both sides are exported.
+            replace (bool): Allow replacing existing files.
+            continue_on_error (bool): Continue on error.
+            varbose (bool): List files as they are being imported.
+            silent (bool): Don't raise exception if pattern doesn't match any file.
+            default_head: Disk side index. Overrides the :data:`Image.default_side`
+                property. If both are `None`, files from both disk sides
+                are exported.
+        Returns:
+            Number of exported files.
+        Raises:
+            ValueError: The :class:`Image` object has been closed.
+            FileExistsError: File already exists.
+            FileNotFoundError: Output directory doesn't exist.
         """
 
         export_proc = _ExportFiles(self, output, files, create_directories,
@@ -2012,7 +2152,13 @@ class Image:
                 side.compact()
 
     def dkill(self) -> bool:
-        """Set disk status in MMB file to uninitialized."""
+        """Set disk status in **MMB** file to uninitialized.
+
+        Returns:
+            ``True`` if disk status has changed.
+        Raises:
+            PermissionError: Image is not contained in **MMB** file.
+        """
         self._not_closed()
 
         if self._mmb_entry is None:
@@ -2021,7 +2167,16 @@ class Image:
         return self._mmb_entry.dkill()
 
     def drestore(self, warn_mode: WarnMode = None) -> bool:
-        """Set disk status in MMB file to initialized."""
+        """Set disk status in **MMB** file to initialized.
+
+        Args:
+            warn_mode (Optional[WarnMode]): Warning mode for validation.
+                Default is :data:`WarnMode.First`.
+        Returns:
+            ``True`` if disk status has changed.
+        Raises:
+            PermissionError: Image is not contained in **MMB** file.
+        """
         self._not_closed()
 
         if self._mmb_entry is None:
@@ -2052,7 +2207,7 @@ class Image:
     def _validate_copy_over(self, source: 'Image', default_head: Optional[int]):
 
         if not isinstance(source, Image):
-            raise ValueError("source must be Image")
+            raise TypeError("source must be Image")
 
         # pylint: disable = protected-access
         self._not_closed()
@@ -2063,10 +2218,10 @@ class Image:
                                 source.file.fileno()):  # type: ignore[union-attr]
             if self.is_mmb:
                 if self.index == source.index:
-                    raise ValueError("source and destination is the same image file")
+                    raise ValueError("source and destination are the same")
             elif (default_head is None or source._default_head is None or
                   default_head == source._default_head):
-                raise ValueError("source and destination is the same image file")
+                raise ValueError("source and destination are the same")
 
     def _validate_backup(self, source: 'Image', default_head: Optional[int]):
 
@@ -2076,14 +2231,21 @@ class Image:
             raise ValueError("cannot copy 80 tracks floppy to 40 tracks.")
 
     def backup(self, source: 'Image', *, warn_mode: WarnMode = None,
-               default_head: int = None):
+               default_head: int = None) -> None:
         """Copy all sectors data from other image.
 
         Args:
-            source: Image object to copy from.
-            default_head: Destination (this) disk side. Overrides
-                Image.default_side property. If not present, both sides are
-                copied from source.
+            source: An :class:`Image` object to copy from.
+            warn_mode (Optional[WarnMode]): Warning mode for validation.
+                Default is :data:`WarnMode.First`.
+            default_head: Destination (this) disk side index. Overrides
+                :data:`Image.default_side` property. If both are `None`,
+                both disk sides are copied from source.
+        Raises:
+            TypeError: Source is not an :class:`Image` object.
+            ValueError: The source or destination :class:`Image` object has been closed.
+            ValueError: Source and destination are the same.
+            ValueError: Source is incompatible with destination.
         """
 
         if default_head is None:
@@ -2118,25 +2280,35 @@ class Image:
 
     def copy_over(self, source: 'Image', pattern: PatternUnion, *,
                   replace=False, ignore_access=False, no_compact=False,
-                  change_dir=False, preserve_attr=False,
+                  change_dir=False, preserve_attr=True,
                   continue_on_error=True, verbose=False, silent=False,
                   default_head: int = None) -> int:
         """Copy files over from other image.
 
         Args:
             source: Source image.
-            pattern: Pattern or list or patterns.
-            replace: Optional; Allow replacing existing files. Default is False.
-            ignore_access: Optional; Allow replacing locked files. Default is
-                False.
-            no_compact: Optional; Fail if there is no continuous block big
-                enough for the files. Otherwise try to compact free space.
-                Default is False - i.e. try to compact free space if needed.
-            preserve_attr: Optional; Preserve locked attribute on copied files.
-            continue_on_error: Optional; Continue on error.
-            varbose: Optional; List files as they are being imported.
-            silent: Optional; Don't raise exception if pattern doesn't match any file.
-            default_head: Default target disk side.
+            pattern (Optional[:class:`PatternUnion`]): Pattern or list of file
+                name patterns.
+            replace (bool): Allow replacing existing files.
+            ignore_access (bool): Allow replacing locked files.
+            no_compact (bool): Fail if there is no continuous block big
+                enough for the file. If `no_compact` is not set, try to compact
+                free space if needed.
+            preserve_attr (bool): Preserve locked attribute on copied files.
+            continue_on_error (bool): Continue on error.
+            varbose (bool): List files as they are being copied.
+            silent (bool): Don't raise exception if pattern doesn't match any file.
+            default_head: Default target disk side index.
+        Raises:
+            TypeError: Source is not an :class:`Image` object.
+            ValueError: The source or destination :class:`Image` object has been closed.
+            ValueError: Source and destination are the same.
+            ValueError: The `pattern` argument is invalid.
+            FileNotFoundError: No file found matching `pattern`.
+            IOError: Disk validation failed.
+            FileExistsError: File already exists.
+            PermissionError: File is locked.
+            RuntimeError: Disk full or no continuous free block for file.
         """
 
         count = 0

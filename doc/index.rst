@@ -11,6 +11,7 @@ Welcome to dfsimage's documentation!
    :caption: Contents:
 
    readme
+   api
 
 Indices and tables
 ==================

@@ -16,13 +16,16 @@ from .mmbfile import MMBFile
 from .mmbentry import MMBEntry
 from .cli import cli
 from .enums import ListFormat, DigestMode, SizeOption, WarnMode
-from .enums import InfMode, TranslationMode
+from .enums import InfMode, OpenMode, TranslationMode
+from .enums import ListFormatUnion
+from .pattern import ParsedPattern, PatternList
+from .pattern import PatternUnion
 
 __version__ = '0.9rc3'
 VERSION = __version__
 
 __all__ = ['Image', 'Side', 'Entry', 'Inf', 'Sectors', 'MMBFile', 'MMBEntry', 'cli',
            'ValidationWarning', 'InfWarning', 'DFSWarning',
-           'ListFormat', 'DigestMode', 'SizeOption', 'WarnMode', 'InfMode',
-           'TranslationMode']
+           'ListFormat', 'DigestMode', 'SizeOption', 'WarnMode', 'InfMode', 'ListFormatUnion',
+           'OpenMode', 'TranslationMode', 'ParsedPattern', 'PatternList', 'PatternUnion']
 __author__ = "Tadek Kijkowski <tkijkowski@gmail.com>"
