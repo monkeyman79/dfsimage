@@ -431,6 +431,8 @@ class _Process:
         self.verbose = (getattr(namespace, "verbose", 0)
                         + 1 - getattr(namespace, "quiet", 0))
         self.silent = getattr(namespace, "silent", None)
+        if getattr(namespace, "allow_invalid_names", False):
+            Image.allow_invalid_names = True
 
     @staticmethod
     def get_sector_number(image, sector):
@@ -1335,6 +1337,9 @@ def _add_global_options(parser, subparser=True, template=False):
             action=argparse.BooleanOptionalAction, default=True)  # pylint: disable=no-member
         add('-s', '--silent', action='store_true',
             help="Don't generate error if a file doesn't exist.")
+        add('--allow-invalid-names', action='store_true',
+            help="Allow non-standard characters (e.g. control codes) in file names "
+                 "of created files, with a warning instead of an error.")
 
 
 def _drecat_command(namespace, _parser):

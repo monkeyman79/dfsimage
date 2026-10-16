@@ -74,11 +74,23 @@ class Image:
         "{is_valid:1}|{sha1}"
         )
 
+    #: bool: Allow non-standard characters in new file names.
+    #:
+    #: DFS file and directory names are normally limited to printable ASCII
+    #: characters (codes 32 - 126). Some disks, typically copy-protected
+    #: games, use other 7-bit codes, e.g. control characters. Such disks are
+    #: opened with a validation warning, but by default creating or renaming
+    #: a file with such a name is an error. Set this to ``True`` (on the class
+    #: to change the default, or on an instance) to issue a warning instead.
+    #: Character codes 128 and above are always rejected.
+    allow_invalid_names: bool = False
+
     def __init__(self, filename: str, for_write: bool = False,
                  open_mode: OpenMode = None, heads: int = None, tracks: int = None,
                  linear: bool = None, warn_mode: WarnMode = None,
                  index: Union[int, MMBEntry] = None,
-                 catalog_only=False) -> None:
+                 catalog_only=False, *,
+                 allow_invalid_names: Optional[bool] = None) -> None:
         """Open disk image file and construct a new :class:`Image` object.
 
         Args:
@@ -101,6 +113,8 @@ class Image:
             catalog_only (bool): Open image only for reading catalog data.
                 Only catalog sectors are read from disk and attempt to access any data
                 outside catalog will raise exception.
+            allow_invalid_names (Optional[bool]): Allow non-standard characters
+                in file names. See :data:`allow_invalid_names`.
         Raises:
             RuntimeError: Image file is invalid or the class doesn't like it
                 for some reason.
@@ -112,6 +126,9 @@ class Image:
             FileExistsError: File already exists and open_mode is :data:`OpenMode.NEW`.
         """
         self._modified = False
+
+        if allow_invalid_names is not None:
+            self.allow_invalid_names = allow_invalid_names
 
         filename, index = self._parse_index(filename, index)
         #: Image file name
@@ -137,6 +154,9 @@ class Image:
         #: Linear double-sided image. Always ``True`` for single-sides images.
         self.linear: int = 0
         self._original_size = 0
+        # Actual size of the image file. May differ from _original_size
+        # if the last sector in the file is incomplete.
+        self._file_size = 0
         self._second_catalog_offset = 0
         self._offset = 0
         self._mmb_file: Optional[MMBFileProtocol] = None
@@ -226,7 +246,12 @@ class Image:
                                  and not os.path.exists(self.path))
 
             if not self.is_new_image:
-                self._original_size = os.path.getsize(self.path)
+                self._file_size = os.path.getsize(self.path)
+                # Some images found in the wild have the last sector
+                # incomplete. Treat the image as if the last sector was
+                # padded to full size - a warning is issued in _load_image.
+                self._original_size = (-(-self._file_size // SECTOR_SIZE)
+                                       * SECTOR_SIZE)
 
             mmb_count = is_mmb_file(self.path)
 
@@ -272,6 +297,7 @@ class Image:
 
             self.linear = True
             self._original_size = MMB_DISK_SIZE
+            self._file_size = MMB_DISK_SIZE
 
         else:
             # Default to single side unless file extension is 'dsd' or image is
@@ -294,7 +320,7 @@ class Image:
         if self.is_new_image:
             return DOUBLE_TRACKS
 
-        if self._original_size < CATALOG_SECTORS * SECTOR_SIZE:
+        if self._file_size < CATALOG_SECTORS * SECTOR_SIZE:
             raise RuntimeError("%s: disk image too small" % self.filename)
 
         catalog_data = bytearray(CATALOG_SECTORS * SECTOR_SIZE)
@@ -318,12 +344,8 @@ class Image:
             raise ValueError("invalid index value")
 
         if not self.is_new_image:
-            # Sanity check - image file size should be multiple of sector size
-            if self._original_size % SECTOR_SIZE != 0:
-                raise RuntimeError("%s: invalid disk image size" % self.filename)
-
             # Make sure that at least first side catalog sectors are present
-            if self._original_size < CATALOG_SECTORS * SECTOR_SIZE:
+            if self._file_size < CATALOG_SECTORS * SECTOR_SIZE:
                 raise RuntimeError("%s: disk image too small" % self.filename)
 
             # Sanity check
@@ -383,24 +405,62 @@ class Image:
 
                 b_count = self.file.readinto(self._dataview)  # type: ignore[attr-defined]
 
-                if b_count != self._original_size and b_count < len(self._dataview):
+                if b_count != self._file_size and b_count < len(self._dataview):
                     raise RuntimeError("%s: unexpected image short read" % self.filename)
 
                 # Validate the image
                 self.validate(warn_mode)
 
-                # Sanity check. Validate the image first to know how to
-                # calculate min_size
-                if self._original_size < self.min_size:
-                    raise RuntimeError("%s: disk image too small" % self.filename)
+                # Images found in the wild are sometimes shorter than they
+                # should be. Missing data reads as empty (0xE5) sectors,
+                # which is what emulators do, so warn rather than fail.
+                self._check_image_size(warn_mode)
 
         except:  # noqa: E722
             self.close(False)
             raise
 
+    def _files_end(self) -> int:
+        """Offset of the end of the last sector occupied by any file.
+
+        Unlike :data:`min_size`, this is computed from the catalog entries
+        even if the catalog is invalid, so it can be used to check whether
+        all file data is present in an image file. Sector numbers past
+        the physical end of the disk side are clipped.
+        """
+        end = 0
+        for side in self.sides:
+            if side is None:
+                continue
+            last = CATALOG_SECTORS
+            total = side.total_sectors
+            for entry in side.files:
+                start = min(entry.start_sector, total)
+                last = max(last, min(max(entry.end_sector, start), total))
+            end = max(end, self._logical_sector_end(side.head, last - 1))
+        return end
+
+    def _check_image_size(self, warn_mode: Optional[WarnMode]) -> None:
+        """Issue warnings if the image file is incomplete."""
+        if self.is_mmb or self.catalog_only or warn_mode == WarnMode.NONE:
+            return
+
+        if self._file_size != self._original_size:
+            warn(ValidationWarning(
+                "%s: disk image size (%d) is not a multiple of sector size, "
+                "last sector padded" % (self.displayname, self._file_size)))
+
+        files_end = self._files_end()
+        if self._original_size < files_end:
+            warn(ValidationWarning(
+                "%s: disk image truncated - files extend to offset %d, "
+                "but image size is %d; missing data reads as empty sectors"
+                % (self.displayname, files_end, self._file_size)))
+
     @classmethod
     def create(cls, filename: str, heads: int = None, tracks: int = None,
-               linear: bool = None, index: Union[int, MMBEntry] = None) -> 'Image':
+               linear: bool = None, index: Union[int, MMBEntry] = None, *,
+               allow_invalid_names: Optional[bool] = None) -> 'Image':
         """Create new image file.
 
         The `Image` object created by this function keeps an open file handle to the
@@ -429,18 +489,21 @@ class Image:
             index (Optional[Union[int, MMBEntry]): Can be used to select default
                 side for the created Image object. Valid values are 0 for first
                 side and 1 for second side.
+            allow_invalid_names (Optional[bool]): Allow non-standard characters
+                in file names. See :data:`allow_invalid_names`.
         Raises:
             ValueError: The ``heads`` or ``tracks`` argument has invalid value.
         Returns:
             New :class:`Image` object.
         """
-        return cls(filename, True, OpenMode.NEW, heads, tracks, linear, None, index)
+        return cls(filename, True, OpenMode.NEW, heads, tracks, linear, None, index,
+                   allow_invalid_names=allow_invalid_names)
 
     @classmethod
     def open(cls, filename: str, for_write=False, open_mode: OpenMode = None,
              heads: int = None, tracks: int = None, linear: bool = None,
              warn_mode: WarnMode = None, index: Union[int, MMBEntry] = None,
-             catalog_only=False) -> 'Image':
+             catalog_only=False, *, allow_invalid_names: Optional[bool] = None) -> 'Image':
         """Open disk image file.
 
         The `Image` object created by this function keeps an open file handle to the
@@ -475,6 +538,8 @@ class Image:
             catalog_only (bool): Open image only for reading catalog data.
                 Only catalog sectors are read from disk and attempt to access any data
                 outside catalog will raise exception.
+            allow_invalid_names (Optional[bool]): Allow non-standard characters
+                in file names. See :data:`allow_invalid_names`.
         Raises:
             ValueError: The ``heads`` or ``tracks`` argument has invalid value.
             ValueError: The ``open_mode`` argument is invalid or ``open_mode``
@@ -487,7 +552,8 @@ class Image:
         """
 
         return cls(filename, for_write, open_mode, heads, tracks, linear,
-                   warn_mode, index, catalog_only)
+                   warn_mode, index, catalog_only,
+                   allow_invalid_names=allow_invalid_names)
 
     def save(self, size_option: SizeOption = None) -> None:
         """Write image data back to file.
@@ -1601,8 +1667,9 @@ class Image:
         if head is None:
             head = self._default_head
 
-        # remove trailing spaces
-        filename = filename.rstrip()
+        # remove trailing spaces (only spaces - other whitespace characters
+        # may be a part of a non-standard file name)
+        filename = filename.rstrip(' ')
 
         # get drive from filename
         filename, f_dir, f_head = self._parse_name(filename, False)
@@ -1625,9 +1692,14 @@ class Image:
         filename = "%s.%s" % (f_dir, filename)
 
         # validate filename characters
-        if any(not Entry._isnamechar(ord(c))
-               for c in filename):
-            raise ValueError("invalid characters in filename '%s'" % filename)
+        if any(not Entry._isnamechar(ord(c)) for c in unicode_to_bbc(filename)):
+            if not self.allow_invalid_names:
+                raise ValueError("invalid characters in filename '%s' "
+                                 "(use --allow-invalid-names to allow)"
+                                 % Entry._escape_name(filename))
+            if any(not Entry._isnamechar_lax(ord(c)) for c in unicode_to_bbc(filename)):
+                raise ValueError("invalid characters in filename '%s'"
+                                 % Entry._escape_name(filename))
 
         return filename, head
 
