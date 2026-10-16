@@ -39,6 +39,7 @@ class ImageProtocol(Protocol):
     default_side: int
     locked: bool
     initialized: bool
+    allow_invalid_names: bool
     _mmb_entry: Optional[MMBEntry]
     MMB_STATUS_MAP: Dict[int, str]
 

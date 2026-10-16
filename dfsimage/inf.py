@@ -124,7 +124,9 @@ class Inf:
         if name_end == -1:
             raise ValueError("invalid inf file")
 
-        name = value[:name_end].rstrip()
+        # Strip only spaces - other whitespace characters (e.g. form feed)
+        # may be a part of the DFS file name
+        name = value[:name_end].rstrip(' ')
 
         # Empty name - i.e. inf line starts with space
         if len(name) == 0:
@@ -356,7 +358,7 @@ class _InfDirectoryCache:
                 # Skip inf file if there is no matching data file
                 if (not entry.is_file()
                         or not entry.name.lower().endswith(".inf")
-                        or not os.path.exists(entry.name[:-4])):
+                        or not os.path.exists(entry.path[:-4])):
                     continue
 
                 # Convert to lower case if possible

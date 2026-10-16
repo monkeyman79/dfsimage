@@ -74,6 +74,51 @@ class Entry:
         """
         return 32 <= char < 127
 
+    @staticmethod
+    def _isnamechar_lax(char: int) -> bool:
+        """Check if character can be stored in a catalog entry at all.
+
+        File and directory names are stored as 7-bit values, so any code
+        in range 0 - 127 can be stored. Codes outside of the standard range
+        checked by :meth:`_isnamechar` are used on some disks, typically as
+        a form of copy protection.
+
+        Args:
+            c: ASCII code of the character.
+        Returns:
+            A boolean indicating if the character can be stored.
+        """
+        return 0 <= char < 128
+
+    @staticmethod
+    def _escape_name(name: Union[str, bytes]) -> str:
+        """Make file name with control characters printable for messages."""
+        if isinstance(name, bytes):
+            name = name.decode("latin-1")
+        return "".join(c if 32 <= ord(c) < 127 else "\\x%02x" % ord(c)
+                       for c in name)
+
+    def _check_name_bytes(self, value: bytes, what: str) -> bool:
+        """Check characters in a file or directory name about to be stored.
+
+        Returns:
+            ``True`` if the name contains non-standard characters which are
+            allowed by the :data:`Image.allow_invalid_names` setting, ``False``
+            if all characters are standard.
+        Raises:
+            ValueError: The name contains characters that are not allowed.
+        """
+        if all(Entry._isnamechar(x) for x in value):
+            return False
+        if (all(Entry._isnamechar_lax(x) for x in value)
+                and getattr(self.side.image, "allow_invalid_names", False)):
+            return True
+        raise ValueError("invalid %s '%s'" % (what, Entry._escape_name(value)))
+
+    def _warn_invalid_name(self, name: bytes) -> None:
+        warn(ValidationWarning("Invalid characters in file name '%s'"
+                               % Entry._escape_name(name)))
+
     @property
     def directory_bytes(self) -> bytes:
         """bytes: File directory name as raw byte.
@@ -82,8 +127,13 @@ class Entry:
 
     @directory_bytes.setter
     def directory_bytes(self, value: bytes) -> None:
-        if len(value) != 1 or not Entry._isnamechar(value[0]):
+        if len(value) != 1:
             raise ValueError("invalid directory name")
+        if self._check_name_bytes(value, "directory name"):
+            self._warn_invalid_name(value + b'.' + self.filename_bytes)
+        self._set_directory_bytes(value)
+
+    def _set_directory_bytes(self, value: bytes) -> None:
         self.side.modified = True
         self.entry1[7] = (self.entry1[7] & 128) | value[0]  # type: ignore
 
@@ -117,8 +167,13 @@ class Entry:
     @filename_bytes.setter
     def filename_bytes(self, value: bytes) -> None:
         value = value.ljust(7)
-        if len(value) != 7 or any(not Entry._isnamechar(x) for x in value):
+        if len(value) != 7:
             raise ValueError("invalid file name")
+        if self._check_name_bytes(value, "file name"):
+            self._warn_invalid_name(self.directory_bytes + b'.' + value.rstrip(b' '))
+        self._set_filename_bytes(value)
+
+    def _set_filename_bytes(self, value: bytes) -> None:
         self.side.modified = True
         self.entry1[0:7] = value  # type: ignore
 
@@ -167,9 +222,20 @@ class Entry:
     def fullname(self, value: str) -> None:
         value = self.side._to_fullname(value)
         if len(value) > 1 and value[1] == '.':
-            self.directory, _, self.filename = value.partition('.')
+            directory, _, filename = value.partition('.')
+            dir_bytes = unicode_to_bbc(directory).encode("ascii")
+            name_bytes = unicode_to_bbc(filename).encode("ascii").ljust(7)
+            if len(dir_bytes) != 1 or len(name_bytes) != 7:
+                raise ValueError("invalid file name '%s'" % Entry._escape_name(value))
+            # Check both parts before writing anything, and warn only once
+            invalid = self._check_name_bytes(dir_bytes, "directory name")
+            invalid |= self._check_name_bytes(name_bytes, "file name")
+            if invalid:
+                self._warn_invalid_name(dir_bytes + b'.' + name_bytes.rstrip(b' '))
+            self._set_directory_bytes(dir_bytes)
+            self._set_filename_bytes(name_bytes)
         else:
-            ValueError("invalid file name '%s'" % value)
+            raise ValueError("invalid file name '%s'" % Entry._escape_name(value))
 
     @property
     def fullname_ascii(self) -> str:
@@ -690,7 +756,8 @@ class Entry:
     def get_inf(self) -> 'Inf':
         """Create :class:`Inf` object for this file."""
         inf = Inf()
-        inf.filename = self.fullname_ascii.lstrip()
+        # Strip only spaces - control characters are part of the name
+        inf.filename = self.fullname_ascii.lstrip(' ')
         inf.load_addr = self.load_address
         inf.exec_addr = self.exec_address
         inf.size = self.size

@@ -247,6 +247,10 @@ global options
   Don't generate error if a file doesn't exist.
 ``--continue, --no-continue``
   Continue on non-fatal errors. (default: True)
+``--allow-invalid-names``
+  Allow non-standard characters (e.g. control codes) in file names of created
+  files, with a warning instead of an error. Such names are found on some
+  copy-protected disks, so this option allows them to be rebuilt.
 
 common command options
 ------------------------
